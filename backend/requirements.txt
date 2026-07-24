@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+anthropic
+psycopg[binary]
+python-dotenv
+truststore
+bcrypt
+itsdangerous
+slowapi

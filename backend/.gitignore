@@ -1,0 +1,11 @@
+# Ambiente e segredos
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Dados do Postgres (caso rode volume local)
+pgdata/
