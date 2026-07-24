@@ -29,6 +29,8 @@ Backend em Python (FastAPI + Uvicorn), streaming via SSE, SDK oficial `anthropic
 
 ## Passo a passo
 
+git clone https://github.com/DiegoHerreraDaSilva/Agente-CAD.git
+
 ### 1. Postgres (Docker)
 
 ```bash
