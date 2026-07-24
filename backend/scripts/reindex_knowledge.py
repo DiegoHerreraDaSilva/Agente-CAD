@@ -1,8 +1,20 @@
 """Backfill de embeddings da base de conhecimento (RAG).
 
-Gera/atualiza o embedding de toda entrada APROVADA. Idempotente — pode rodar
-quantas vezes quiser (re-embedda tudo). Use após ativar a feature pela primeira
-vez, ou depois de trocar o modelo/dimensão de embedding.
+Script utilitário de linha de comando — NÃO é chamado pelo app em runtime.
+Gera/atualiza o embedding de toda entrada APROVADA, em lote. Idempotente:
+pode rodar quantas vezes quiser (re-embedda tudo).
+
+⚠️ No uso NORMAL você NÃO precisa deste script. Aprovar/criar/editar uma
+entrada pelo painel /admin já gera o embedding automaticamente (hooks em
+app/repositories/knowledge.py). Use este script só nos casos de MANUTENÇÃO:
+
+  1. Backfill inicial — indexar entradas que já existiam no banco antes do RAG.
+  2. Reprocessar falhas — se a Voyage estava fora/rate-limited na hora que a
+     entrada foi aprovada, ela fica aprovada mas sem embedding (não é
+     recuperável até rodar isto). Rodar de novo pega só as que faltam.
+  3. Trocar o modelo/dimensão de embedding — regera todos os vetores.
+
+Seguro em produção (mexe só na coluna embedding de entradas já aprovadas).
 
 Rodar a partir de backend/ (com o .venv ativo e o .env preenchido):
     python scripts/reindex_knowledge.py

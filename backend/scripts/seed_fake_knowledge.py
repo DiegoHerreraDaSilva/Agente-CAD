@@ -1,10 +1,19 @@
-"""Popula a base de conhecimento com ~40 entradas FICTÍCIAS de NX/CAD para
-testar a qualidade da recuperação (RAG) localmente.
+"""Popula a base com ~40 entradas FICTÍCIAS de NX/CAD para testar a qualidade
+da recuperação (RAG) localmente.
 
-Idempotente: apaga e recria as entradas marcadas com criado_por='seed_ficticio'
-a cada execução, então não duplica. Depois de inserir, gera o embedding de cada
-uma (precisa de VOYAGE_API_KEY no .env; se faltar, as entradas entram sem
-embedding e você pode rodar scripts/reindex_knowledge.py depois).
+Script utilitário de linha de comando — NÃO é chamado pelo app em runtime.
+
+⚠️ APENAS PARA DESENVOLVIMENTO/TESTE. NÃO rode numa base real: ele enche o
+banco de dados fictícios. Serve para exercitar o RAG quando a base de verdade
+ainda tem poucas entradas (ex.: conferir se uma pergunta puxa a entrada certa).
+
+Idempotente: cada execução APAGA e recria as entradas marcadas com
+criado_por='seed_ficticio' (não duplica), depois embedda todas em lote (precisa
+de VOYAGE_API_KEY no .env; sem ela, entram sem embedding e você roda
+scripts/reindex_knowledge.py depois).
+
+Para limpar as fictícias sem inserir de novo:
+    DELETE FROM knowledge_entries WHERE criado_por = 'seed_ficticio';
 
 Rodar a partir de backend/:
     python scripts/seed_fake_knowledge.py
