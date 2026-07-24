@@ -33,14 +33,16 @@ TOM_POR_NIVEL = {
 }
 
 
-def montar_system_prompt(
-    nivel: str, conhecimento: str, memoria: str, resumo: str = ""
-) -> list[dict]:
-    """Monta o system prompt como blocos cacheáveis (prompt caching):
-    1) tom por nível, 2) conhecimento compartilhado, 3) memória pessoal —
-    cada um com cache_control ephemeral. O resumo de sessão (volátil, muda a
-    cada /compact) vai por último, sem cache_control, conforme recomendação
-    de deixar conteúdo variável após o último breakpoint.
+def montar_system_prompt(nivel: str, memoria: str, resumo: str = "") -> list[dict]:
+    """Monta o system prompt (prefixo ESTÁVEL da sessão): tom por nível, memória
+    pessoal e, se houver, o resumo da sessão. Um único `cache_control` ephemeral
+    no último bloco cacheia todo o system de uma vez.
+
+    O conhecimento da base NÃO entra aqui: pós-RAG ele é dinâmico (muda a cada
+    pergunta) e iria invalidar o cache do histórico a cada turno — por isso vai
+    no turno atual (ver montar_bloco_conhecimento + chat.py). O resumo entra no
+    bloco cacheável porque só muda em /compact (infrequente): quando muda, o
+    prefixo re-escreve uma vez, custo aceitável.
     """
     tom = TOM_POR_NIVEL.get(nivel, TOM_POR_NIVEL["pleno"])
     memoria_txt = memoria.strip() or "(sem memória pessoal registrada ainda)"
@@ -52,13 +54,6 @@ def montar_system_prompt(
         "acesso ao software. Responda em português do Brasil.\n\n"
         f"Ajuste de tom para este usuário: {tom}"
     )
-    bloco_conhecimento = (
-        "A seguir, a base de conhecimento compartilhada da equipe. Use-a como "
-        "referência de boas práticas e decisões já validadas:\n"
-        "--- BASE DE CONHECIMENTO COMPARTILHADA ---\n"
-        f"{conhecimento}\n"
-        "--- FIM DA BASE ---"
-    )
     bloco_memoria = (
         "A seguir, a memória pessoal do engenheiro. Use-a para personalizar as "
         "respostas (preferências, histórico e projetos recentes):\n"
@@ -68,9 +63,8 @@ def montar_system_prompt(
     )
 
     blocks = [
-        {"type": "text", "text": bloco_tom, "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": bloco_conhecimento, "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": bloco_memoria, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": bloco_tom},
+        {"type": "text", "text": bloco_memoria},
     ]
     if resumo.strip():
         blocks.append(
@@ -84,10 +78,30 @@ def montar_system_prompt(
                     f"{resumo.strip()}\n"
                     "--- FIM DO RESUMO ---"
                 ),
-                # Sem cache_control: conteúdo por sessão, muda a cada /compact.
             }
         )
+    # Um único breakpoint de cache no fim do system cacheia todo o prefixo estável.
+    blocks[-1]["cache_control"] = {"type": "ephemeral"}
     return blocks
+
+
+def montar_bloco_conhecimento(entradas: list[dict]) -> str:
+    """Texto do conhecimento recuperado por RAG, para injetar no TURNO ATUAL
+    (não no system — ver montar_system_prompt). Retorna '' se nada foi
+    recuperado, e nesse caso o turno segue sem bloco de conhecimento."""
+    if not entradas:
+        return ""
+    corpo = "\n\n---\n\n".join(
+        f"## {e['titulo']}\n{e['conteudo']}" for e in entradas
+    )
+    return (
+        "Base de conhecimento da equipe relevante para esta pergunta (recuperada "
+        "por similaridade semântica). Use como referência de boas práticas e "
+        "decisões já validadas:\n"
+        "--- CONHECIMENTO RECUPERADO ---\n"
+        f"{corpo}\n"
+        "--- FIM DO CONHECIMENTO ---"
+    )
 
 
 def validar_imagens(imagens: list[str]) -> list[tuple[str, str]]:

@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 import anthropic
+import voyageai
 from dotenv import load_dotenv
 from fastapi import Request
 from slowapi import Limiter
@@ -57,6 +58,17 @@ ADMIN_EMAILS = {
 # Cliente Anthropic — lê ANTHROPIC_API_KEY do ambiente. max_retries=4 absorve
 # picos de sobrecarga (429/5xx/529) com backoff exponencial automático.
 client = anthropic.Anthropic(max_retries=4)
+
+# --- RAG (Voyage AI) ---------------------------------------------------------
+# Client Voyage — lê VOYAGE_API_KEY do ambiente. Como truststore.inject_into_ssl()
+# acima patcheia o SSL do processo inteiro, a chamada à Voyage já confia no
+# certificado da rede corporativa sem config extra.
+voyage_client = voyageai.Client(max_retries=2)
+
+VOYAGE_MODEL = os.getenv("VOYAGE_MODEL", "voyage-3.5")
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))  # tem que bater com vector(N) no schema
+RAG_TOP_N = int(os.getenv("RAG_TOP_N", "4"))             # nº de entradas recuperadas por pergunta
+RAG_LIMIAR = float(os.getenv("RAG_LIMIAR", "0.4"))       # score mínimo de similaridade p/ injetar
 
 # Rate limiting (em memória — um único processo uvicorn, sem réplicas).
 # Prioridade: /auth/login (força bruta de senha) e rotas que chamam a API do

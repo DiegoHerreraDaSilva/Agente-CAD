@@ -8,8 +8,8 @@ from fastapi.responses import StreamingResponse
 
 from app.config import MODEL, client, get_user_or_ip, limiter
 from app.deps import requer_senha_atualizada
-from app.prompt import montar_system_prompt, validar_imagens
-from app.repositories.knowledge import buscar_conhecimento_texto, registrar_uso_cache
+from app.prompt import montar_bloco_conhecimento, montar_system_prompt, validar_imagens
+from app.repositories.knowledge import recuperar_conhecimento, registrar_uso_cache
 from app.repositories.sessions import (
     adicionar_mensagem,
     carregar_mensagens,
@@ -47,23 +47,51 @@ def chat(request: Request, req: ChatRequest, usuario: dict = Depends(requer_senh
     historico = carregar_mensagens(req.session_id)
     messages = [{"role": m["papel"], "content": m["conteudo"]} for m in historico]
 
-    # A mensagem atual, se tiver imagens coladas, vai para a API com os bytes
-    # reais (blocos de imagem) — mensagens antigas do histórico permanecem só
-    # texto (a marcação Markdown acima é só para exibição ao recarregar).
-    if imagens_validas:
-        blocos = [
+    # Cache de prefixo do histórico: marca a última mensagem ANTERIOR ao turno
+    # atual (messages[-1] é a pergunta recém-adicionada) com um cache_control.
+    # Isso faz o prefixo `system + turnos 1..N-1` ser cacheado; a cada turno o
+    # breakpoint "anda" para frente. O turno atual carrega o conhecimento
+    # recuperado (dinâmico) e fica sem cache. Só há o que cachear a partir do
+    # 2º turno (com histórico anterior).
+    if len(messages) >= 2:
+        anterior = messages[-2]
+        messages[-2] = {
+            "role": anterior["role"],
+            "content": [
+                {
+                    "type": "text",
+                    "text": anterior["content"],
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        }
+
+    # RAG: recupera as entradas mais relevantes para a pergunta e injeta no
+    # TURNO ATUAL (não no system — senão invalidaria o cache do histórico).
+    # Degrada graciosamente: recuperar_conhecimento retorna [] se a Voyage cair.
+    entradas = recuperar_conhecimento(req.pergunta)
+    bloco_conhecimento = montar_bloco_conhecimento(entradas)
+
+    # Monta o content do turno atual: conhecimento recuperado → imagens → pergunta.
+    # (Mensagens antigas do histórico permanecem só texto; a marcação Markdown
+    # das imagens acima é só para exibição ao recarregar a sessão.)
+    turno_atual: list[dict] = []
+    if bloco_conhecimento:
+        turno_atual.append({"type": "text", "text": bloco_conhecimento})
+    for media_type, b64data in imagens_validas:
+        turno_atual.append(
             {
                 "type": "image",
                 "source": {"type": "base64", "media_type": media_type, "data": b64data},
             }
-            for media_type, b64data in imagens_validas
-        ]
-        blocos.append({"type": "text", "text": req.pergunta or "Veja a(s) imagem(ns) anexada(s)."})
-        messages[-1] = {"role": "user", "content": blocos}
+        )
+    turno_atual.append(
+        {"type": "text", "text": req.pergunta or "Veja a(s) imagem(ns) anexada(s)."}
+    )
+    messages[-1] = {"role": "user", "content": turno_atual}
 
-    conhecimento = buscar_conhecimento_texto()
     system_prompt = montar_system_prompt(
-        usuario["nivel"], conhecimento, usuario["memoria"], sessao["resumo"]
+        usuario["nivel"], usuario["memoria"], sessao["resumo"]
     )
 
     def gerar():

@@ -5,8 +5,9 @@ Prova de conceito de um agente **consultivo** de engenharia CAD/Siemens NX, com:
 - **Login e gestão de usuários** com autenticação no PostgreSQL (email/senha, hash bcrypt), papéis (engenheiro/admin) e troca de senha obrigatória no primeiro acesso.
 - **Chat com streaming** da API do Claude (backend FastAPI + SSE), com sessões persistidas e sidebar de conversas.
 - **Três camadas de memória**: curto prazo (histórico da sessão), pessoal (por usuário, editável no Perfil) e compartilhada (base de conhecimento da equipe).
+- **RAG (busca semântica)**: a base de conhecimento não é mais injetada inteira no prompt — as entradas são embeddadas com a **Voyage AI** e guardadas no Postgres (`pgvector`); a cada pergunta, só as top-N entradas mais relevantes são recuperadas por similaridade e injetadas no turno atual.
 - **Compactação de sessão** (`/compact`): resume a conversa via Claude, libera contexto e envia o resumo como proposta de conhecimento compartilhado (fila de aprovação).
-- **Prompt caching**: o system prompt é montado em blocos cacheáveis, reduzindo custo/latência em conversas longas.
+- **Prompt caching**: o prefixo estável (system + histórico da conversa) é cacheado incrementalmente, reduzindo custo/latência em conversas longas.
 - **Painel de administração** (TI): gestão de usuários (criar, editar, resetar senha, excluir), aprovação/rejeição/edição/exclusão/criação manual de entradas na base de conhecimento (com busca), e visão de economia de prompt caching.
 - **Anexos no chat**: colar (Ctrl+V) ou anexar imagens, enviadas para a API de visão do Claude junto da pergunta.
 - **Interface moderna** (React + Framer Motion + lucide-react): animações de entrada/hover/clique, cantos arredondados sutis, estados vazios/loading tratados, e botão de copiar em cada resposta do agente.
@@ -15,7 +16,7 @@ O agente é **estritamente consultivo** — não executa nada no NX. Modelo usad
 
 ## Stack
 
-Backend em Python (FastAPI + Uvicorn), streaming via SSE, SDK oficial `anthropic`. Banco PostgreSQL 16 rodando em Docker (só o banco — o backend roda em venv local). Frontend em **React + TypeScript (Vite)**, com `react-router-dom` para navegação client-side. Em produção, o build estático (`frontend/dist`) é servido pelo próprio FastAPI — um único processo, como antes. O backend usa o pacote `truststore` para confiar no certificado da rede corporativa ao chamar a API da Anthropic (rede com inspeção TLS).
+Backend em Python (FastAPI + Uvicorn), streaming via SSE, SDK oficial `anthropic`. Embeddings do RAG via **Voyage AI** (`voyageai`). Banco **PostgreSQL 16 com a extensão `pgvector`** (imagem `pgvector/pgvector:pg16`) rodando em Docker — só o banco; o backend roda em venv local. Frontend em **React + TypeScript (Vite)**, com `react-router-dom` para navegação client-side. Em produção, o build estático (`frontend/dist`) é servido pelo próprio FastAPI — um único processo. O backend usa o pacote `truststore` para confiar no certificado da rede corporativa ao chamar as APIs da Anthropic e da Voyage (rede com inspeção TLS) — como `truststore.inject_into_ssl()` patcheia o SSL do processo inteiro, os dois clients herdam essa confiança.
 
 > O frontend já foi HTML/CSS/JS puro (sem Node), porque a rede corporativa bloqueava `npm install`. Esse bloqueio foi resolvido depois (certificado corporativo liberado para o npm) e o frontend foi migrado para React visando performance (bundles minificados, code-splitting do painel admin via `React.lazy`) e organização de pastas (componentes/hooks/lib em vez de um `<script>` inline por página).
 
@@ -23,8 +24,9 @@ Backend em Python (FastAPI + Uvicorn), streaming via SSE, SDK oficial `anthropic
 
 - Python 3.10+
 - Node.js 18+ e npm (para o build do frontend)
-- Docker Desktop (para o Postgres)
+- Docker Desktop (para o Postgres com pgvector)
 - Uma chave da API Anthropic
+- Uma chave da API Voyage AI (embeddings do RAG — https://dash.voyageai.com)
 - Um navegador (a interface é servida pelo próprio backend)
 
 ## Passo a passo
@@ -36,9 +38,11 @@ git clone https://github.com/DiegoHerreraDaSilva/Agente-CAD.git
 ```bash
 cd backend
 cp .env.example .env          # no Windows PowerShell: copy .env.example .env
-# edite o .env: ANTHROPIC_API_KEY, POSTGRES_PASSWORD, SESSION_SECRET e ADMIN_EMAILS
-docker compose up -d          # sobe o Postgres e roda init.sql
+# edite o .env: ANTHROPIC_API_KEY, VOYAGE_API_KEY, POSTGRES_PASSWORD, SESSION_SECRET e ADMIN_EMAILS
+docker compose up -d          # sobe o Postgres (imagem pgvector/pgvector:pg16) e roda init.sql
 ```
+
+> Se você já tinha um volume do Postgres criado na imagem antiga `postgres:16`, rode `docker compose down && docker compose up -d` (sem `-v`, para não perder os dados) uma vez para o container subir na imagem `pgvector/pgvector:pg16`. A extensão `vector` e a coluna de embedding são criadas no startup do backend (`garantir_schema()`), então o volume existente é migrado sem recriar.
 
 Gere um `SESSION_SECRET` aleatório:
 
@@ -58,7 +62,17 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-O backend garante o schema do banco no startup (idempotente — não precisa recriar o volume Docker ao atualizar o código).
+O backend garante o schema do banco no startup (idempotente — não precisa recriar o volume Docker ao atualizar o código), incluindo a extensão `vector` e a coluna de embedding.
+
+**Indexar a base para o RAG** (uma vez, com o `.env` preenchido): as entradas de conhecimento só são recuperáveis depois de embeddadas. Rode, a partir de `backend/`:
+
+```bash
+python scripts/reindex_knowledge.py       # gera embedding de toda entrada aprovada sem embedding
+# opcional, para testar localmente com dados fictícios:
+python scripts/seed_fake_knowledge.py     # insere ~40 entradas fictícias NX/CAD e já as embedda
+```
+
+Aprovar/criar/editar uma entrada pelo painel `/admin` gera o embedding automaticamente; o `reindex` é só para o backfill inicial (ou depois de trocar o modelo de embedding).
 
 ### 3. Frontend (React + Vite)
 
@@ -91,17 +105,19 @@ nx-agent-poc/
 ├── backend/
 │   ├── main.py                  # composition root: cria o app, inclui os routers, SPA fallback
 │   ├── init.sql                 # schema para instalação nova (volume Docker do zero)
-│   ├── docker-compose.yml       # só o serviço Postgres
+│   ├── docker-compose.yml       # só o serviço Postgres (imagem pgvector/pgvector:pg16)
 │   ├── requirements.txt
 │   ├── .env / .env.example
+│   ├── scripts/                 # reindex_knowledge.py (backfill RAG), seed_fake_knowledge.py
 │   └── app/
-│       ├── config.py            # constantes, client Anthropic, paths, ADMIN_EMAILS, truststore
-│       ├── db.py                # conexão Postgres + garantir_schema()
+│       ├── config.py            # constantes, clients Anthropic e Voyage, RAG_*, ADMIN_EMAILS, truststore
+│       ├── db.py                # conexão Postgres + garantir_schema() (inclui extensão vector)
 │       ├── schemas.py            # modelos Pydantic de request
 │       ├── security.py            # hash/verificação de senha (bcrypt)
 │       ├── deps.py                 # dependências de auth do FastAPI (usuario_atual, admin_atual...)
-│       ├── prompt.py                # montagem do system prompt + validação de imagens
-│       ├── repositories/              # acesso a dados: users.py, sessions.py, knowledge.py
+│       ├── prompt.py                # system prompt + bloco de conhecimento recuperado + validação de imagens
+│       ├── embeddings.py             # geração de embeddings via Voyage (RAG)
+│       ├── repositories/              # acesso a dados: users.py, sessions.py, knowledge.py (RAG + indexação)
 │       └── routers/                    # rotas por área: pages, auth, admin, sessions, knowledge, chat
 └── frontend/
     ├── vite.config.ts           # proxy de dev para o FastAPI (:8000)
@@ -144,9 +160,9 @@ knowledge_entries          cache_usage_log
 ├─ conteudo                ├─ user_id (FK)
 ├─ categoria                ├─ input_tokens
 ├─ criado_por                ├─ cache_creation_input_tokens
-└─ criado_em                  ├─ cache_read_input_tokens
-                              ├─ output_tokens
-                              └─ criado_em
+├─ status                    ├─ cache_read_input_tokens
+├─ embedding (vector 1024)   ├─ output_tokens
+└─ criado_em                  └─ criado_em
 ```
 
 FKs de `chat_sessions`, `chat_messages` e `cache_usage_log` são `ON DELETE CASCADE`. O schema é criado tanto em `init.sql` (volume novo) quanto em `garantir_schema()` no startup do app (`CREATE TABLE IF NOT EXISTS` / `ALTER TABLE ADD COLUMN IF NOT EXISTS`), então atualizações de código nunca exigem recriar o volume Docker.
@@ -155,7 +171,7 @@ FKs de `chat_sessions`, `chat_messages` e `cache_usage_log` são `ON DELETE CASC
 
 1. **Curto prazo** (por sessão): `chat_messages` — histórico multi-turn da conversa atual.
 2. **Pessoal** (por usuário): `users.memoria` — texto livre editável no Perfil, sempre injetado no prompt.
-3. **Compartilhada** (da equipe): `knowledge_entries` — base técnica de NX/CAD, injetada no prompt a cada mensagem (só as entradas com `status = 'aprovado'`).
+3. **Compartilhada** (da equipe): `knowledge_entries` — base técnica de NX/CAD. Só entradas `status = 'aprovado'` **e com embedding** entram no prompt, e não a base inteira: a cada mensagem, o RAG recupera por similaridade só as top-N entradas relevantes à pergunta (ver seção RAG abaixo).
 
 **`/compact`** resume as `chat_messages` da sessão (chamada separada ao Claude), grava em `chat_sessions.resumo` e **apaga** as mensagens antigas — o resumo substitui o detalhe, não convive com ele. Esse resumo também é enviado automaticamente como uma nova linha em `knowledge_entries` com `status = 'pendente'` (categoria `resumo_sessao`) — vira conhecimento compartilhado de fato só depois que um admin aprova na aba **Base de conhecimento** do painel `/admin` (`GET/POST /admin/knowledge...`). Rejeitar **exclui a linha de `knowledge_entries`** (não é uma mudança de status) — o resumo de origem em `chat_sessions.resumo` é uma tabela totalmente separada e nunca é afetado: rejeitar na base de conhecimento não apaga nada do histórico/chat do usuário.
 
@@ -191,6 +207,12 @@ Esse header só se aplica quando o **FastAPI** serve a resposta — ou seja, pro
 
 Fora de escopo por enquanto: `Strict-Transport-Security` (HSTS) — só faz sentido quando o app rodar atrás de TLS de verdade (hoje é HTTP local, `https_only=False` no `SessionMiddleware`); ver roadmap.
 
+### RAG (recuperação semântica da base de conhecimento)
+
+Em vez de mandar a base inteira no prompt, as entradas aprovadas são embeddadas com a **Voyage AI** e guardadas na coluna `knowledge_entries.embedding` (`vector(1024)`, `pgvector`), com índice HNSW de cosseno. O embedding é gerado automaticamente quando uma entrada é **aprovada**, **criada** (pelo admin, já aprovada) ou **editada** (se aprovada) — os hooks vivem em `app/repositories/knowledge.py`. A Voyage distingue `input_type` `"document"` (ao indexar) de `"query"` (ao buscar), o que melhora a recuperação. Backfill inicial: `scripts/reindex_knowledge.py`.
+
+A cada `/chat`, `recuperar_conhecimento(pergunta)` embedda a pergunta, busca as top-N (`RAG_TOP_N`, default 4) entradas mais similares (`ORDER BY embedding <=> %s`), descarta as abaixo do limiar de score (`RAG_LIMIAR`, default 0.4) e injeta o resultado no **turno atual** (não no `system`). Se a Voyage cair, `recuperar_conhecimento` retorna `[]` e o chat segue **sem** conhecimento recuperado (degradação graciosa — não cai de volta na base inteira). Parâmetros e modelo (`VOYAGE_MODEL`, `EMBEDDING_DIM`) ficam em `app/config.py`.
+
 ### Fluxo de uma mensagem de chat
 
 ```
@@ -198,9 +220,12 @@ POST /chat {session_id, pergunta}
   → valida sessão e login
   → grava a pergunta em chat_messages
   → monta o histórico completo (multi-turn) da sessão
-  → busca a base de conhecimento compartilhada (determinística, ORDER BY id)
-  → monta o system prompt em blocos cacheáveis:
-      [tom por nível] --cache-- [conhecimento compartilhado] --cache-- [memória pessoal] --cache-- [resumo, sem cache]
+  → RAG: embedda a pergunta (Voyage) e recupera top-N entradas por similaridade (pgvector)
+  → system prompt (prefixo estável, 1 breakpoint de cache no fim):
+      [tom por nível] + [memória pessoal] + [resumo] --cache--
+  → messages:
+      [turnos 1..N-1] --cache no último--   ← histórico cacheável
+      [turno N = conhecimento recuperado + imagens + pergunta]  ← delta dinâmico, sem cache
   → client.messages.stream(..., max_tokens=8192) — streaming SSE token a token
   → ao final: captura uso de tokens (incl. cache) e grava a resposta + o log de cache
 ```
@@ -209,7 +234,12 @@ Erros de sobrecarga/limite da API (mesmo no meio do streaming) são detectados p
 
 ### Prompt caching
 
-O `system` é uma lista de blocos, cada um com `cache_control: {"type": "ephemeral"}` (exceto o resumo, que é volátil por sessão e fica após o último breakpoint para não invalidar os demais). O modelo `claude-haiku-4-5` exige um mínimo de ~4096 tokens acumulados no prefixo para cachear de fato — por isso a base de conhecimento foi populada com conteúdo técnico suficiente para cruzar esse limite. O uso real (tokens lidos/escritos do cache) é logado em `cache_usage_log` e exposto no painel `/admin`, com estimativa de custo e economia, e filtro por usuário.
+O caching é **por prefixo** (`system → messages`): qualquer bloco dinâmico invalida o cache de tudo que vem depois dele. Por isso o conhecimento recuperado por RAG (que muda a cada pergunta) **não** entra no `system` — iria invalidar o histórico a cada turno. Ele entra no turno atual, que nunca é cacheado mesmo. O ganho de cache foi movido para o prefixo estável:
+
+- **`system`** (`[tom] + [memória] + [resumo]`): um único `cache_control: {"type": "ephemeral"}` no último bloco cacheia todo o prefixo. O resumo entra aqui porque só muda em `/compact` (infrequente).
+- **Histórico** (`messages`): a última mensagem *anterior* ao turno atual recebe um `cache_control`. O prefixo `system + turnos 1..N-1` fica cacheado e, a cada turno, o breakpoint "anda" para frente — paga-se write (1,25x) só sobre o turno novo e lê-se o resto a ~0,1x.
+
+O `claude-haiku-4-5` exige ~4096 tokens acumulados no prefixo para cachear de fato; conversas curtas não cacheiam (esperado) — o ganho cresce com o histórico. Validado localmente: numa conversa com prefixo grande, o 2º turno registrou `cache_read_input_tokens` ≈ tamanho do prefixo e `cache_creation` só do delta. O uso real é logado em `cache_usage_log` e exposto no painel `/admin`, com estimativa de custo/economia e filtro por usuário.
 
 ### Frontend
 

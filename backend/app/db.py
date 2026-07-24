@@ -22,6 +22,9 @@ def garantir_schema() -> None:
     try:
         with psycopg.connect(_pg_conninfo()) as conn:
             with conn.cursor() as cur:
+                # Extensão de vetores (RAG) — requer a imagem pgvector/pgvector:pg16.
+                # Precisa vir antes de qualquer coluna vector(...) abaixo.
+                cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS users (
@@ -99,6 +102,16 @@ def garantir_schema() -> None:
                     "ALTER TABLE knowledge_entries "
                     "ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'aprovado' "
                     "CHECK (status IN ('pendente', 'aprovado', 'rejeitado'));"
+                )
+                # Coluna de embedding (RAG) — dimensão tem que bater com EMBEDDING_DIM
+                # em config.py (voyage-3.5 = 1024). Idempotente.
+                cur.execute(
+                    "ALTER TABLE knowledge_entries "
+                    "ADD COLUMN IF NOT EXISTS embedding vector(1024);"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_knowledge_embedding "
+                    "ON knowledge_entries USING hnsw (embedding vector_cosine_ops);"
                 )
             conn.commit()
     except Exception as e:  # Postgres pode ainda não estar de pé

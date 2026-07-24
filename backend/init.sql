@@ -1,6 +1,9 @@
 -- Base de conhecimento compartilhada (POC)
 -- Executado automaticamente pelo Postgres na primeira subida do container.
 
+-- Extensão de vetores (RAG) — requer a imagem pgvector/pgvector:pg16.
+CREATE EXTENSION IF NOT EXISTS vector;
+
 -- Usuários do sistema (autenticação por email/senha).
 -- Também é criada no startup do app (idempotente), para volumes já existentes.
 CREATE TABLE IF NOT EXISTS users (
@@ -57,8 +60,13 @@ CREATE TABLE IF NOT EXISTS knowledge_entries (
     criado_por TEXT        NOT NULL,
     status     TEXT        NOT NULL DEFAULT 'aprovado'
                CHECK (status IN ('pendente', 'aprovado', 'rejeitado')),
+    embedding  vector(1024),
     criado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Índice de similaridade por cosseno (RAG). HNSW não exige calibração de lists.
+CREATE INDEX IF NOT EXISTS idx_knowledge_embedding
+    ON knowledge_entries USING hnsw (embedding vector_cosine_ops);
 
 INSERT INTO knowledge_entries (titulo, conteudo, categoria, criado_por) VALUES
 (

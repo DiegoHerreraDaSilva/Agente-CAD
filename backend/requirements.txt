@@ -7,3 +7,5 @@ truststore
 bcrypt
 itsdangerous
 slowapi
+voyageai
+pgvector
