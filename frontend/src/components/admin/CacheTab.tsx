@@ -30,7 +30,7 @@ export default function CacheTab() {
   return (
     <>
       <h1 style={{ marginTop: 0 }}>Economia de prompt caching</h1>
-      <p className="sub">Tokens de system prompt (tom + base de conhecimento + memória) reaproveitados via cache, em vez de reprocessados a cada mensagem.</p>
+      <p className="sub">Tokens do prefixo estável — system prompt (tom + memória + resumo) e histórico da conversa — reaproveitados via cache, em vez de reprocessados a cada mensagem. A base de conhecimento não entra aqui: é recuperada por RAG (dinâmica por pergunta) e vai no turno atual, fora do cache.</p>
 
       <div className="filtro-linha">
         <div className="campo">
