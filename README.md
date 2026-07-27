@@ -394,6 +394,6 @@ Resultado: **nenhuma vulnerabilidade encontrada.**
 
 ## Fora de escopo (roadmap)
 
-Login Microsoft/Entra ID, escrita/execução real no NX (NXOpen), log de auditoria de acesso administrativo, MD.evolucao, `Strict-Transport-Security` (HSTS) quando o app rodar atrás de TLS de verdade.
+Escrita/execução real no NX (NXOpen), log de auditoria de acesso administrativo, `Strict-Transport-Security` (HSTS) quando o app rodar atrás de TLS de verdade.
 
 **Limitação conhecida — `/auth/login` por IP em rede com NAT.** Diferente de `/chat`/`/compact`, o rate limit de login (5/min) é por IP porque o usuário ainda não está autenticado nesse ponto — não há `user_id` disponível como chave. Numa rede corporativa onde todo mundo sai pelo mesmo IP externo, isso significa que o teto de 5 tentativas/min é compartilhado pela empresa toda: numa manhã de pico com vários engenheiros logando ao mesmo tempo, alguém pode levar `429` mesmo digitando a senha certa. Mitigações possíveis quando isso incomodar na prática: teto mais folgado, um limite combinado por email tentado (em vez de só por IP), ou CAPTCHA — nenhuma foi implementada agora para não aumentar o escopo da POC além do necessário.
