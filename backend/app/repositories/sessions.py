@@ -1,5 +1,6 @@
 """Acesso a dados de sessões e mensagens de chat."""
 
+import json
 from typing import Optional
 
 import psycopg
@@ -35,11 +36,11 @@ def criar_sessao(user_id: int) -> dict:
 
 
 def sessao_do_usuario(session_id: int, user_id: int) -> Optional[dict]:
-    """Retorna {id, titulo, resumo, tem_mensagens} se a sessão for do usuário."""
+    """Retorna {id, titulo, resumo, rag_injetadas, tem_mensagens} se a sessão for do usuário."""
     with psycopg.connect(_pg_conninfo()) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, titulo, resumo FROM chat_sessions "
+                "SELECT id, titulo, resumo, rag_injetadas FROM chat_sessions "
                 "WHERE id = %s AND user_id = %s",
                 (session_id, user_id),
             )
@@ -54,8 +55,20 @@ def sessao_do_usuario(session_id: int, user_id: int) -> Optional[dict]:
         "id": row[0],
         "titulo": row[1],
         "resumo": row[2],
+        "rag_injetadas": row[3] or {},
         "tem_mensagens": total > 0,
     }
+
+
+def atualizar_rag_injetadas(session_id: int, rag_injetadas: dict[str, int]) -> None:
+    """Persiste o mapa {entry_id: turno_injetado} de dedup do RAG para a sessão."""
+    with psycopg.connect(_pg_conninfo()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE chat_sessions SET rag_injetadas = %s WHERE id = %s",
+                (json.dumps(rag_injetadas), session_id),
+            )
+        conn.commit()
 
 
 def carregar_mensagens(session_id: int) -> list[dict]:
@@ -120,10 +133,18 @@ def excluir_sessao(session_id: int, user_id: int) -> bool:
 
 
 def apagar_mensagens(session_id: int) -> None:
+    # Zera rag_injetadas na MESMA transação do DELETE: se o resumo gerado pelo
+    # /compact não capturou o conteúdo de uma entrada já injetada, filtrá-la
+    # como "já mandada" depois de apagar as mensagens a tornaria irrecuperável
+    # (não sobra registro dela em lugar nenhum).
     with psycopg.connect(_pg_conninfo()) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "DELETE FROM chat_messages WHERE session_id = %s", (session_id,)
+            )
+            cur.execute(
+                "UPDATE chat_sessions SET rag_injetadas = '{}'::jsonb WHERE id = %s",
+                (session_id,),
             )
         conn.commit()
 

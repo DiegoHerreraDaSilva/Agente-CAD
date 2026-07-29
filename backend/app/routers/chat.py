@@ -12,6 +12,7 @@ from app.prompt import montar_bloco_conhecimento, montar_system_prompt, validar_
 from app.repositories.knowledge import recuperar_conhecimento, registrar_uso_cache
 from app.repositories.sessions import (
     adicionar_mensagem,
+    atualizar_rag_injetadas,
     carregar_mensagens,
     definir_titulo,
     gerar_titulo,
@@ -69,7 +70,14 @@ def chat(request: Request, req: ChatRequest, usuario: dict = Depends(requer_senh
     # RAG: recupera as entradas mais relevantes para a pergunta e injeta no
     # TURNO ATUAL (não no system — senão invalidaria o cache do histórico).
     # Degrada graciosamente: recuperar_conhecimento retorna [] se a Voyage cair.
-    entradas = recuperar_conhecimento(req.pergunta)
+    # turno_atual = nº de mensagens do usuário até aqui (a atual incluída) —
+    # base para a janela de reinjeção (dedup por sessão).
+    turno_atual = sum(1 for m in historico if m["papel"] == "user")
+    entradas, novo_rag_injetadas = recuperar_conhecimento(
+        req.pergunta, sessao["rag_injetadas"], turno_atual
+    )
+    if novo_rag_injetadas != sessao["rag_injetadas"]:
+        atualizar_rag_injetadas(req.session_id, novo_rag_injetadas)
     bloco_conhecimento = montar_bloco_conhecimento(entradas)
 
     # Monta o content do turno atual: conhecimento recuperado → imagens → pergunta.

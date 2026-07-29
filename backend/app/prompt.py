@@ -52,7 +52,13 @@ def montar_system_prompt(nivel: str, memoria: str, resumo: str = "") -> list[dic
         "Você é ESTRITAMENTE CONSULTIVO: oriente, explique e recomende, mas NUNCA "
         "afirme que executou ou executará qualquer ação dentro do NX — você não tem "
         "acesso ao software. Responda em português do Brasil.\n\n"
-        f"Ajuste de tom para este usuário: {tom}"
+        f"Ajuste de tom para este usuário: {tom}\n\n"
+        "Regras de forma (valem para todos os níveis, inclusive estagiário/júnior — "
+        "não reduzem a explicação do conteúdo técnico, só cortam texto de forma):\n"
+        "- Comece pela resposta. Não recapitule a pergunta nem anuncie o que vai fazer.\n"
+        "- Não termine com um resumo do que acabou de dizer.\n"
+        "- Não repita informação já dita nesta conversa — referencie em vez de repetir "
+        '(ex.: "como vimos no passo 2").'
     )
     bloco_memoria = (
         "A seguir, a memória pessoal do engenheiro. Use-a para personalizar as "

@@ -19,11 +19,15 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Sessões de chat e suas mensagens (memória de curto prazo, por usuário).
 -- Também criadas no startup do app (idempotente).
+-- rag_injetadas: mapa {entry_id: turno_injetado} das entradas de conhecimento
+-- já injetadas nesta conversa, para deduplicar RAG por sessão (não reinjetar
+-- a mesma entrada a cada pergunta próxima do mesmo tema).
 CREATE TABLE IF NOT EXISTS chat_sessions (
     id            SERIAL PRIMARY KEY,
     user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     titulo        TEXT NOT NULL DEFAULT 'Nova sessão',
     resumo        TEXT NOT NULL DEFAULT '',
+    rag_injetadas JSONB NOT NULL DEFAULT '{}'::jsonb,
     criado_em     TIMESTAMPTZ NOT NULL DEFAULT now(),
     atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -61,6 +65,7 @@ CREATE TABLE IF NOT EXISTS knowledge_entries (
     status     TEXT        NOT NULL DEFAULT 'aprovado'
                CHECK (status IN ('pendente', 'aprovado', 'rejeitado')),
     embedding  vector(1024),
+    resumo_rag TEXT,
     criado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

@@ -113,6 +113,23 @@ def garantir_schema() -> None:
                     "CREATE INDEX IF NOT EXISTS idx_knowledge_embedding "
                     "ON knowledge_entries USING hnsw (embedding vector_cosine_ops);"
                 )
+                # Dedup de RAG por sessão: mapa {entry_id: turno_injetado} das
+                # entradas já injetadas nesta conversa, para não repetir a
+                # mesma entrada a cada pergunta próxima do mesmo tema.
+                # Idempotente.
+                cur.execute(
+                    "ALTER TABLE chat_sessions "
+                    "ADD COLUMN IF NOT EXISTS rag_injetadas JSONB NOT NULL DEFAULT '{}'::jsonb;"
+                )
+                # resumo_rag: versão condensada do conteúdo, usada só na
+                # INJEÇÃO no turno atual (o embedding sempre usa o conteúdo
+                # completo — recall e injeção têm objetivos opostos de
+                # tamanho). NULL = sem resumo gerado ainda; a injeção cai de
+                # volta no conteúdo completo (COALESCE). Idempotente.
+                cur.execute(
+                    "ALTER TABLE knowledge_entries "
+                    "ADD COLUMN IF NOT EXISTS resumo_rag TEXT;"
+                )
             conn.commit()
     except Exception as e:  # Postgres pode ainda não estar de pé
         print(f"[startup] não foi possível garantir o schema de users: {e}")

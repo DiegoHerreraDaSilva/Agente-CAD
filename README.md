@@ -148,9 +148,9 @@ users                    chat_sessions              chat_messages
 ├─ email (unique)         ├─ user_id (FK→users)       ├─ session_id (FK→chat_sessions)
 ├─ senha_hash (bcrypt)    ├─ titulo                    ├─ papel ('user'|'assistant')
 ├─ nivel (enum)           ├─ resumo (texto, /compact)  ├─ conteudo
-├─ role ('engineer'|      ├─ criado_em                 └─ criado_em
-│         'admin')        └─ atualizado_em
-├─ memoria (texto livre)
+├─ role ('engineer'|      ├─ rag_injetadas (jsonb)     └─ criado_em
+│         'admin')        ├─ criado_em
+├─ memoria (texto livre)  └─ atualizado_em
 ├─ must_change_senha
 └─ criado_em
 
@@ -162,7 +162,8 @@ knowledge_entries          cache_usage_log
 ├─ criado_por                ├─ cache_creation_input_tokens
 ├─ status                    ├─ cache_read_input_tokens
 ├─ embedding (vector 1024)   ├─ output_tokens
-└─ criado_em                  └─ criado_em
+├─ resumo_rag (nullable)     └─ criado_em
+└─ criado_em
 ```
 
 FKs de `chat_sessions`, `chat_messages` e `cache_usage_log` são `ON DELETE CASCADE`. O schema é criado tanto em `init.sql` (volume novo) quanto em `garantir_schema()` no startup do app (`CREATE TABLE IF NOT EXISTS` / `ALTER TABLE ADD COLUMN IF NOT EXISTS`), então atualizações de código nunca exigem recriar o volume Docker.
@@ -211,7 +212,15 @@ Fora de escopo por enquanto: `Strict-Transport-Security` (HSTS) — só faz sent
 
 Em vez de mandar a base inteira no prompt, as entradas aprovadas são embeddadas com a **Voyage AI** e guardadas na coluna `knowledge_entries.embedding` (`vector(1024)`, `pgvector`), com índice HNSW de cosseno. O embedding é gerado automaticamente quando uma entrada é **aprovada**, **criada** (pelo admin, já aprovada) ou **editada** (se aprovada) — os hooks vivem em `app/repositories/knowledge.py`. A Voyage distingue `input_type` `"document"` (ao indexar) de `"query"` (ao buscar), o que melhora a recuperação. Backfill inicial: `scripts/reindex_knowledge.py`.
 
-A cada `/chat`, `recuperar_conhecimento(pergunta)` embedda a pergunta, busca as top-N (`RAG_TOP_N`, default 4) entradas mais similares (`ORDER BY embedding <=> %s`), descarta as abaixo do limiar de score (`RAG_LIMIAR`, default 0.4) e injeta o resultado no **turno atual** (não no `system`). Se a Voyage cair, `recuperar_conhecimento` retorna `[]` e o chat segue **sem** conhecimento recuperado (degradação graciosa — não cai de volta na base inteira). Parâmetros e modelo (`VOYAGE_MODEL`, `EMBEDDING_DIM`) ficam em `app/config.py`.
+A cada `/chat`, `recuperar_conhecimento(pergunta, rag_injetadas, turno_atual)` embedda a pergunta, busca o dobro de candidatas (top-2N por `ORDER BY embedding <=> %s`) e descarta as abaixo do limiar de score (`RAG_LIMIAR`, default 0.4). Se a Voyage cair, retorna `([], rag_injetadas inalterado)` e o chat segue **sem** conhecimento recuperado (degradação graciosa — não cai de volta na base inteira). Parâmetros e modelo (`VOYAGE_MODEL`, `EMBEDDING_DIM`, `RAG_TOP_N`) ficam em `app/config.py`.
+
+**Dedup por sessão.** `chat_sessions.rag_injetadas` guarda um mapa `{entry_id: turno_injetado}` das entradas já mandadas nesta conversa. Ao montar o top-N (default 4) a partir das candidatas, uma entrada já injetada há **menos** de `RAG_JANELA_REINJECAO` turnos (default 10) é pulada — mas a lista é **completada** com a próxima melhor candidata, nunca simplesmente encolhida, para não perder contexto útil em conversas longas. Se ninguém a substituir nesta rodada, ela permanece disponível e pode ser selecionada de novo depois. Ao rodar `/compact`, `rag_injetadas` é zerado **na mesma transação** que apaga `chat_messages` (`apagar_mensagens` em `app/repositories/sessions.py`) — senão uma entrada injetada só antes da compactação ficaria marcada como "já mandada" para sempre, mesmo sem o detalhe ter sobrevivido no resumo.
+
+**`resumo_rag` (versão condensada para injeção).** Recuperação e injeção têm objetivos opostos de tamanho: o embedding sempre usa `conteudo` completo (mais texto ajuda a busca), mas o texto **injetado** no turno atual usa `COALESCE(resumo_rag, conteudo)` — a coluna `resumo_rag` é gerada automaticamente (mesmo hook do embedding) só para entradas com mais de `RESUMO_RAG_MIN_CHARS` (default 3200, ~800 tokens); entradas curtas já são o caso ótimo e ficam com `resumo_rag = NULL`, caindo de volta no conteúdo completo. Falha ao gerar o resumo não quebra a aprovação/criação (mesmo padrão de degradação graciosa do embedding). Backfill/reprocessamento: `scripts/backfill_resumo_rag.py`.
+
+### Concisão no tom (economia de tokens de saída)
+
+O bloco de tom (`TOM_POR_NIVEL` em `app/prompt.py`) inclui regras de forma comuns aos quatro níveis: não recapitular a pergunta, não anunciar o que vai fazer, não terminar com um resumo do que já foi dito, e referenciar informação já dada na conversa em vez de repeti-la. Essas regras cortam só a **forma** — a explicação didática do "porquê" (definir termos, passo a passo) continua intacta para estagiário/júnior, que é o objetivo original desses níveis (reduzir a carga dos engenheiros sênior como professores).
 
 ### Fluxo de uma mensagem de chat
 
@@ -272,6 +281,9 @@ Build (`npm run build`) gera `frontend/dist`, servido pelo FastAPI: os arquivos 
 10. Botão de copiar em mensagens do agente copia o texto para a área de transferência.
 11. `curl -i http://localhost:8000/` (rodando o build de produção, não `npm run dev`) mostra `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` e `Content-Security-Policy` na resposta; console do navegador sem erros de CSP ao usar o app normalmente (imagens no chat, painel admin).
 12. Rate limiting: 6 tentativas seguidas de `POST /auth/login` com senha errada → a 6ª retorna `429`; 21 chamadas seguidas a `POST /chat` → a 21ª retorna `429`; 11 chamadas seguidas a `POST /sessions/{id}/compact` → a 11ª retorna `429`.
+13. Respostas do chat começam direto no conteúdo (sem recapitular a pergunta) e não terminam com um resumo do que foi dito; estagiário/júnior continuam recebendo explicação didática do "porquê".
+14. Numa mesma sessão, perguntar duas vezes sobre o mesmo tema não injeta a mesma entrada de conhecimento de novo (`chat_sessions.rag_injetadas` não duplica o id); voltar ao tema depois de `RAG_JANELA_REINJECAO` turnos reinjeta normalmente; rodar `/compact` zera `rag_injetadas`.
+15. Aprovar/criar uma entrada de conhecimento longa (>`RESUMO_RAG_MIN_CHARS`) gera `resumo_rag`; uma entrada curta fica com `resumo_rag = NULL` e a injeção usa o conteúdo completo (fallback via `COALESCE`).
 
 ## Testes de segurança realizados
 
@@ -397,3 +409,5 @@ Resultado: **nenhuma vulnerabilidade encontrada.**
 Escrita/execução real no NX (NXOpen), log de auditoria de acesso administrativo, `Strict-Transport-Security` (HSTS) quando o app rodar atrás de TLS de verdade.
 
 **Limitação conhecida — `/auth/login` por IP em rede com NAT.** Diferente de `/chat`/`/compact`, o rate limit de login (5/min) é por IP porque o usuário ainda não está autenticado nesse ponto — não há `user_id` disponível como chave. Numa rede corporativa onde todo mundo sai pelo mesmo IP externo, isso significa que o teto de 5 tentativas/min é compartilhado pela empresa toda: numa manhã de pico com vários engenheiros logando ao mesmo tempo, alguém pode levar `429` mesmo digitando a senha certa. Mitigações possíveis quando isso incomodar na prática: teto mais folgado, um limite combinado por email tentado (em vez de só por IP), ou CAPTCHA — nenhuma foi implementada agora para não aumentar o escopo da POC além do necessário.
+
+**Medição das otimizações de tokens (concisão de tom, dedup de RAG por sessão, `resumo_rag`).** As três otimizações acima foram implementadas e commitadas juntas; o ideal para atribuir o ganho de cada uma isoladamente seria medir `AVG(input_tokens)`, `AVG(output_tokens)` e `AVG(cache_read_input_tokens)` em `cache_usage_log` antes/depois de cada uma, espaçadas por alguns dias de uso real — não foi feito aqui por decisão explícita de entregar tudo de uma vez. Fica como próximo passo, se for necessário justificar o ganho de cada otimização separadamente para a diretoria.

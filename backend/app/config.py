@@ -69,6 +69,12 @@ VOYAGE_MODEL = os.getenv("VOYAGE_MODEL", "voyage-3.5")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))  # tem que bater com vector(N) no schema
 RAG_TOP_N = int(os.getenv("RAG_TOP_N", "4"))             # nº de entradas recuperadas por pergunta
 RAG_LIMIAR = float(os.getenv("RAG_LIMIAR", "0.4"))       # score mínimo de similaridade p/ injetar
+RAG_JANELA_REINJECAO = int(os.getenv("RAG_JANELA_REINJECAO", "10"))  # turnos até reinjetar uma entrada já mandada
+
+# resumo_rag: só gera versão condensada pra injeção quando o conteúdo passa
+# deste tamanho (aprox. 800 tokens ~ 4 chars/token). Entradas curtas já são o
+# caso ótimo — resumir não ajuda e arrisca cortar detalhe técnico importante.
+RESUMO_RAG_MIN_CHARS = int(os.getenv("RESUMO_RAG_MIN_CHARS", "3200"))
 
 # Rate limiting (em memória — um único processo uvicorn, sem réplicas).
 # Prioridade: /auth/login (força bruta de senha) e rotas que chamam a API do
