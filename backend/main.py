@@ -96,4 +96,11 @@ def spa_fallback(full_path: str):
             status_code=404,
             detail="Frontend não buildado — rode `npm run build` em frontend/.",
         )
+    # Arquivos estáticos na raiz do build (favicon.svg, logo.png, icons.svg —
+    # tudo que vem de frontend/public/) precisam ser servidos como estão; sem
+    # isso, /favicon.svg cai neste fallback e devolve index.html (HTML em vez
+    # de imagem), e o navegador mostra o ícone genérico de globo.
+    candidato = FRONTEND_DIST / full_path
+    if full_path and candidato.is_file() and candidato.resolve().is_relative_to(FRONTEND_DIST.resolve()):
+        return FileResponse(candidato)
     return FileResponse(index_path)
