@@ -1,7 +1,7 @@
 """
 Backend da POC do Agente CAD/NX.
 
-FastAPI + streaming (SSE) da API do Claude + autenticação de usuários no
+FastAPI + streaming (SSE) da API da DeepSeek + autenticação de usuários no
 PostgreSQL (email/senha) + memória pessoal por usuário + base de conhecimento
 compartilhada no Postgres.
 

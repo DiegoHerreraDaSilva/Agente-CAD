@@ -261,11 +261,7 @@ export default function ChatPage() {
               </>
             )}
           </div>
-          <ChatInput
-            enviando={enviando}
-            onEnviar={onEnviarChat}
-            imagensHabilitadas={usuario.provider !== "deepseek"}
-          />
+          <ChatInput enviando={enviando} onEnviar={onEnviarChat} imagensHabilitadas={false} />
         </div>
       </div>
 

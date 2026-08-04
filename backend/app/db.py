@@ -130,15 +130,11 @@ def garantir_schema() -> None:
                     "ALTER TABLE knowledge_entries "
                     "ADD COLUMN IF NOT EXISTS resumo_rag TEXT;"
                 )
-                # Provider (deepseek/anthropic) que gerou cada linha de uso —
-                # necessário porque o histórico pode ter linhas de providers
-                # diferentes, com fórmulas de custo distintas (ver
-                # /admin/cache-stats). Default 'anthropic' preserva o
-                # significado das linhas já existentes antes desta coluna.
-                # Idempotente.
+                # App migrou 100% para DeepSeek (só provider suportado) — a
+                # coluna provider (que existiu brevemente durante a
+                # convivência com Anthropic) não faz mais sentido. Idempotente.
                 cur.execute(
-                    "ALTER TABLE cache_usage_log "
-                    "ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'anthropic';"
+                    "ALTER TABLE cache_usage_log DROP COLUMN IF EXISTS provider;"
                 )
             conn.commit()
     except Exception as e:  # Postgres pode ainda não estar de pé

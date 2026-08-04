@@ -370,17 +370,14 @@ def recuperar_conhecimento(
     return selecionadas, novo_rag_injetadas
 
 
-def registrar_uso_cache(session_id: int, user_id: int, usage, provider: str) -> None:
-    """`usage` é um `UsoNormalizado` (app/llm.py) — mesmo shape independente
-    do provider que gerou a resposta. `provider` fica gravado por linha
-    porque o histórico pode ter linhas Anthropic e DeepSeek convivendo (a
-    fórmula de custo de cada uma é diferente — ver /admin/cache-stats)."""
+def registrar_uso_cache(session_id: int, user_id: int, usage) -> None:
+    """`usage` é um `UsoNormalizado` (app/llm.py)."""
     with psycopg.connect(_pg_conninfo()) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO cache_usage_log "
                 "(session_id, user_id, input_tokens, cache_creation_input_tokens, "
-                "cache_read_input_tokens, output_tokens, provider) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                "cache_read_input_tokens, output_tokens) VALUES (%s, %s, %s, %s, %s, %s)",
                 (
                     session_id,
                     user_id,
@@ -388,7 +385,6 @@ def registrar_uso_cache(session_id: int, user_id: int, usage, provider: str) -> 
                     usage.cache_creation_input_tokens,
                     usage.cache_read_input_tokens,
                     usage.output_tokens,
-                    provider,
                 ),
             )
         conn.commit()
