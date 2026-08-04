@@ -153,9 +153,11 @@ def resposta_stream(
                 model=DEEPSEEK_MODEL,
                 max_tokens=max_tokens,
                 messages=mensagens_openai,
-                thinking={"type": "disabled"},
                 stream=True,
                 stream_options={"include_usage": True},
+                # "thinking" é extensão específica da DeepSeek, fora do
+                # schema padrão da OpenAI — o SDK só aceita via extra_body.
+                extra_body={"thinking": {"type": "disabled"}},
             )
             for chunk in stream:
                 if chunk.usage is not None:
@@ -209,7 +211,7 @@ def resposta_simples(system_text: str, user_content: str, max_tokens: int) -> tu
                 {"role": "system", "content": system_text},
                 {"role": "user", "content": user_content},
             ],
-            thinking={"type": "disabled"},
+            extra_body={"thinking": {"type": "disabled"}},
         )
     except Exception as e:
         raise _traduzir_erro_openai(e) from e
