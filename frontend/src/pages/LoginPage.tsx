@@ -36,7 +36,7 @@ export default function LoginPage() {
         <div className="logo-wrap">
           <img src="/logo.png" alt="Schwaben Engineering" />
         </div>
-        <h1>Agente CAD/NX</h1>
+        <h1>Assistente Engenharia</h1>
         {erro && (
           <motion.div
             className="erro"

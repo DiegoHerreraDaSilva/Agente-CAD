@@ -211,7 +211,7 @@ export default function ChatPage() {
 
   return (
     <>
-      <Header marca="Agente CAD/NX">
+      <Header marca="Assistente Engenharia">
         <span className="user-info">
           <strong>{usuario.email}</strong>
           <span className="nivel-badge">{NIVEL_LABEL[usuario.nivel] || usuario.nivel}</span>
