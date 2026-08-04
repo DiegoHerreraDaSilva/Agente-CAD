@@ -1,4 +1,4 @@
-# Agente CAD/NX — POC
+# Assistente Engenharia — POC
 
 Prova de conceito de um agente **consultivo** de engenharia CAD/Siemens NX, com:
 
@@ -9,15 +9,15 @@ Prova de conceito de um agente **consultivo** de engenharia CAD/Siemens NX, com:
 - **Compactação de sessão** (`/compact`): resume a conversa via DeepSeek, libera contexto e envia o resumo como proposta de conhecimento compartilhado (fila de aprovação).
 - **Cache automático de prefixo**: a DeepSeek cacheia sozinha o prefixo repetido entre turnos (system + histórico), reduzindo custo/latência em conversas longas — sem marcação explícita no request.
 - **Painel de administração** (TI): gestão de usuários (criar, editar, resetar senha, excluir), aprovação/rejeição/edição/exclusão/criação manual de entradas na base de conhecimento (com busca), e visão de economia de cache.
-- **Interface moderna** (React + Framer Motion + lucide-react): animações de entrada/hover/clique, cantos arredondados sutis, estados vazios/loading tratados, e botão de copiar em cada resposta do agente.
+- **Interface moderna** (React + Tailwind CSS v4 + Framer Motion + lucide-react + `next-themes`): tema claro/escuro com toggle no header, cards em gradiente com contorno de destaque, cantos de 14px, animações de entrada/hover/clique, estados vazios/loading tratados, e botão de copiar em cada resposta do agente.
 
 O agente é **estritamente consultivo** — não executa nada no NX. LLM: **DeepSeek** (`deepseek-v4-flash`), com thinking mode desligado explicitamente. Anexo de imagem no chat não é suportado (visão não confirmada no formato OpenAI-compatible da DeepSeek).
 
 ## Stack
 
-Backend em Python (FastAPI + Uvicorn), streaming via SSE, SDK `openai` (a API da DeepSeek é OpenAI-compatible — `base_url="https://api.deepseek.com"`). Embeddings do RAG via **Voyage AI** (`voyageai`). Banco **PostgreSQL 16 com a extensão `pgvector`** (imagem `pgvector/pgvector:pg16`) rodando em Docker — só o banco; o backend roda em venv local. Frontend em **React + TypeScript (Vite)**, com `react-router-dom` para navegação client-side. Em produção, o build estático (`frontend/dist`) é servido pelo próprio FastAPI — um único processo. O backend usa o pacote `truststore` para confiar no certificado da rede corporativa ao chamar APIs externas (DeepSeek, Voyage — rede com inspeção TLS) — como `truststore.inject_into_ssl()` patcheia o SSL do processo inteiro, todos os clients herdam essa confiança automaticamente, sem config por client.
+Backend em Python (FastAPI + Uvicorn), streaming via SSE, SDK `openai` (a API da DeepSeek é OpenAI-compatible — `base_url="https://api.deepseek.com"`). Embeddings do RAG via **Voyage AI** (`voyageai`). Banco **PostgreSQL 16 com a extensão `pgvector`** (imagem `pgvector/pgvector:pg16`) rodando em Docker — só o banco; o backend roda em venv local. Frontend em **React + TypeScript (Vite)**, com `react-router-dom` para navegação client-side, **Tailwind CSS v4** (`@tailwindcss/vite`, CSS-first — sem `tailwind.config.js`) e **`next-themes`** para o tema claro/escuro. Em produção, o build estático (`frontend/dist`) é servido pelo próprio FastAPI — um único processo. O backend usa o pacote `truststore` para confiar no certificado da rede corporativa ao chamar APIs externas (DeepSeek, Voyage — rede com inspeção TLS) — como `truststore.inject_into_ssl()` patcheia o SSL do processo inteiro, todos os clients herdam essa confiança automaticamente, sem config por client.
 
-> O frontend já foi HTML/CSS/JS puro (sem Node), porque a rede corporativa bloqueava `npm install`. Esse bloqueio foi resolvido depois (certificado corporativo liberado para o npm) e o frontend foi migrado para React visando performance (bundles minificados, code-splitting do painel admin via `React.lazy`) e organização de pastas (componentes/hooks/lib em vez de um `<script>` inline por página).
+> O frontend já foi HTML/CSS/JS puro (sem Node), porque a rede corporativa bloqueava `npm install`. Esse bloqueio foi resolvido depois (certificado corporativo liberado para o npm) e o frontend foi migrado para React visando performance (bundles minificados, code-splitting do painel admin via `React.lazy`) e organização de pastas (componentes/hooks/lib em vez de um `<script>` inline por página). Mais tarde, o CSS puro (paleta fixa, só tema escuro) foi migrado para o design system Schwaben com Tailwind + tokens de tema (ver seção "Interface e design system" abaixo) — os nomes de classe dos componentes (`.btn-primario`, `.card`, `.modal` etc.) foram mantidos; só o CSS por trás deles mudou, para não precisar reescrever o JSX de cada componente.
 
 ## Pré-requisitos
 
@@ -124,21 +124,21 @@ nx-agent-poc/
     ├── public/logo.png
     ├── dist/                    # build de produção (gerado, servido pelo FastAPI)
     └── src/
-        ├── main.tsx, App.tsx    # entry point + rotas (react-router)
-        ├── styles/global.css    # paleta Schwaben (variáveis CSS), portada 1:1 da versão HTML
-        ├── lib/                 # api.ts (wrappers tipados de cada endpoint), types.ts, markdown.tsx
+        ├── main.tsx, App.tsx    # entry point (envolve em ThemeProvider) + rotas (react-router)
+        ├── styles/global.css    # @import "tailwindcss" + tokens Schwaben (:root claro / .dark escuro)
+        ├── lib/                 # api.ts (wrappers tipados de cada endpoint), types.ts, markdown.tsx, utils.ts (cn())
         ├── hooks/                # useChatStream, use401Redirect
         ├── context/AuthContext.tsx
         ├── components/
         │   ├── auth/            # RequireAuth, RequireSenhaAtualizada, RequireAdmin (guards de rota)
-        │   ├── layout/           # Header
-        │   ├── chat/             # Sidebar, MessageBubble, ChatInput (paste/anexo), ResumoBox
+        │   ├── layout/           # Header, ThemeToggle
+        │   ├── chat/             # Sidebar, MessageBubble, ChatInput, ResumoBox
         │   ├── modal/            # PerfilModal
         │   └── admin/            # UsersTab, CacheTab, KnowledgeTab, modais de usuário
         └── pages/                # LoginPage, ChangePasswordPage, ChatPage, AdminPage
 ```
 
-Backend: separado em `app/config.py` → `db.py`/`schemas.py` → `security.py`/`deps.py`/`prompt.py` → `repositories/` (acesso a dados) → `routers/` (rotas), sem framework de camadas nem ORM (`repositories/*.py` são só funções com SQL cru via `psycopg`). `main.py` fica fino: cria o `FastAPI()`, registra os middlewares, inclui cada router e cuida do fallback de SPA — que **precisa** continuar definido ali, depois de todo `include_router(...)`, senão "engoliria" as rotas de API. Frontend: organizado por responsabilidade (components/hooks/lib/pages), sem introduzir um framework de UI (Tailwind etc.) — a paleta e as classes CSS da versão HTML anterior foram portadas como estão.
+Backend: separado em `app/config.py` → `db.py`/`schemas.py` → `security.py`/`deps.py`/`prompt.py` → `repositories/` (acesso a dados) → `routers/` (rotas), sem framework de camadas nem ORM (`repositories/*.py` são só funções com SQL cru via `psycopg`). `main.py` fica fino: cria o `FastAPI()`, registra os middlewares, inclui cada router e cuida do fallback de SPA — que **precisa** continuar definido ali, depois de todo `include_router(...)`, senão "engoliria" as rotas de API. Frontend: organizado por responsabilidade (components/hooks/lib/pages), com Tailwind CSS v4 + tokens de tema (claro/escuro) — ver "Interface e design system".
 
 ### Modelo de dados (Postgres)
 
@@ -276,9 +276,18 @@ RequireAuth            (401 → /login)
             └─ AdminPage (rota "/admin")
 ```
 
-`ChatPage` usa o hook `useChatStream` para consumir o SSE de `/chat` token a token, `lib/markdown.tsx` para renderizar a resposta (mesmo parser leve da versão anterior, sem dependência externa) e reaproveita a mesma extensão de Markdown para imagens (`![](data:...)`) usada pelos anexos colados/anexados no chat. `AdminPage` carrega `ChatPage`/`AdminPage` via `React.lazy` — o bundle do painel admin só é baixado por quem realmente abre `/admin`.
+`ChatPage` usa o hook `useChatStream` para consumir o SSE de `/chat` token a token e `lib/markdown.tsx` para renderizar a resposta (parser leve próprio, sem dependência externa — suporta negrito/itálico/código/listas/tabelas GFM e a extensão de imagem `![](data:...)`, usada hoje só para exibir imagens de mensagens antigas do histórico, já que anexar imagem nova não é mais suportado — ver seção "LLM: DeepSeek"). `AdminPage` carrega `ChatPage`/`AdminPage` via `React.lazy` — o bundle do painel admin só é baixado por quem realmente abre `/admin`.
 
 Build (`npm run build`) gera `frontend/dist`, servido pelo FastAPI: os arquivos JS/CSS ficam em `/assets` (via `StaticFiles`) e qualquer rota que não seja de API cai num fallback que devolve `index.html` — o roteamento de fato acontece no navegador (react-router).
+
+### Interface e design system
+
+O CSS (`frontend/src/styles/global.css`) segue o design system Schwaben: **Tailwind CSS v4** via `@import "tailwindcss";` (sem `tailwind.config.js`/`postcss.config.js` — o plugin `@tailwindcss/vite` cuida de tudo), tokens de cor em `:root` (tema claro) e `.dark` (tema escuro, aplicado por padrão), cantos de **14px** em card/modal/cartão de login (8px em botão/input, pill em badge/chip), e a assinatura visual `.card`: superfície em gradiente sutil, brilho (`hairline`) no topo, sombra, e um contorno luminoso na base que acende no hover.
+
+- **Tema**: `next-themes` (`ThemeProvider attribute="class" defaultTheme="dark"` em `main.tsx`) alterna a classe `dark` no `<html>`. O botão de troca (`components/layout/ThemeToggle.tsx`, ícone Sun/Moon) fica embutido no `Header` — visível no chat e no admin.
+- **`cn()`** (`lib/utils.ts`, `clsx` + `tailwind-merge`) — helper padrão para montar className condicional em componentes novos.
+- Os componentes existentes **mantiveram os mesmos nomes de classe** de antes da migração (`.btn-primario`, `.sessao-item`, `.modal`, `.badge`, `.stat-card` etc.) — só o CSS por trás de cada um foi reescrito para os tokens novos (`var(--accent)`, `var(--surface)`, `var(--text-muted)` etc. em vez de `var(--brand-600)`/`var(--slate-900)` fixos). Isso evitou reescrever o JSX de cada tela só para trocar de sistema visual; um componente novo, porém, deve usar classes utilitárias Tailwind diretamente (não os nomes de classe antigos).
+- `select option { color: #000; background: #fff; }` é proposital: o menu nativo do `<select>` não herda os tokens de tema, e forçar só a cor do texto (sem fundo) deixava a lista ilegível quando o navegador desenha o popup com fundo escuro por padrão (SO em dark mode).
 
 ## Como validar
 
