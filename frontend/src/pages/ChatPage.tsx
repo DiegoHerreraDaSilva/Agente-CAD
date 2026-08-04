@@ -261,7 +261,7 @@ export default function ChatPage() {
               </>
             )}
           </div>
-          <ChatInput enviando={enviando} onEnviar={onEnviarChat} imagensHabilitadas={false} />
+          <ChatInput enviando={enviando} onEnviar={onEnviarChat} />
         </div>
       </div>
 
