@@ -287,19 +287,33 @@ def admin_dashboard(
             )
             heatmap = [{"dia_semana": r[0], "hora": r[1], "mensagens": r[2]} for r in cur.fetchall()]
 
-            # Ranking de usuários (nominal — só admin)
+            # Ranking de usuários (nominal — só admin). As subconsultas agregam
+            # mensagens e tokens SEPARADAMENTE antes de juntar por usuário —
+            # fazer os dois JOINs direto (chat_messages e cache_usage_log,
+            # ambos por session_id) causa produto cartesiano: cada mensagem
+            # multiplicada por cada linha de uso de tokens da mesma sessão,
+            # inflando as duas contagens.
             cur.execute(
-                "SELECT u.email, count(m.id) AS mensagens, "
-                "coalesce(sum(l.output_tokens), 0) AS tokens, max(m.criado_em) AS ultima "
-                "FROM users u "
-                "LEFT JOIN chat_sessions s ON s.user_id = u.id "
-                "LEFT JOIN chat_messages m ON m.session_id = s.id AND m.papel = 'user' "
-                "  AND m.criado_em >= now() - (%s || ' days')::interval "
-                "LEFT JOIN cache_usage_log l ON l.session_id = s.id "
-                "  AND l.criado_em >= now() - (%s || ' days')::interval "
-                "GROUP BY u.id, u.email "
-                "HAVING count(m.id) > 0 "
-                "ORDER BY mensagens DESC",
+                """
+                SELECT u.email, coalesce(msg.mensagens, 0), coalesce(tok.tokens, 0), msg.ultima
+                FROM users u
+                LEFT JOIN (
+                    SELECT s.user_id, count(*) AS mensagens, max(m.criado_em) AS ultima
+                    FROM chat_messages m
+                    JOIN chat_sessions s ON s.id = m.session_id
+                    WHERE m.papel = 'user' AND m.criado_em >= now() - (%s || ' days')::interval
+                    GROUP BY s.user_id
+                ) msg ON msg.user_id = u.id
+                LEFT JOIN (
+                    SELECT s.user_id, sum(l.output_tokens) AS tokens
+                    FROM cache_usage_log l
+                    JOIN chat_sessions s ON s.id = l.session_id
+                    WHERE l.criado_em >= now() - (%s || ' days')::interval
+                    GROUP BY s.user_id
+                ) tok ON tok.user_id = u.id
+                WHERE coalesce(msg.mensagens, 0) > 0
+                ORDER BY msg.mensagens DESC
+                """,
                 (dias, dias),
             )
             ranking = [
@@ -312,17 +326,29 @@ def admin_dashboard(
                 for r in cur.fetchall()
             ]
 
-            # Sessões mais ativas
+            # Sessões mais ativas — mesma lógica de subconsultas separadas
+            # (e mesma definição de "mensagens" do ranking acima: só as do
+            # usuário/"perguntas", pra comparar as duas visões de igual pra
+            # igual em vez de uma contar user+assistant e a outra só user).
             cur.execute(
-                "SELECT s.id, s.titulo, u.email, count(m.id) AS mensagens, "
-                "coalesce(sum(l.output_tokens), 0) AS tokens "
-                "FROM chat_sessions s "
-                "JOIN users u ON u.id = s.user_id "
-                "JOIN chat_messages m ON m.session_id = s.id "
-                "LEFT JOIN cache_usage_log l ON l.session_id = s.id "
-                "WHERE s.atualizado_em >= now() - (%s || ' days')::interval "
-                "GROUP BY s.id, s.titulo, u.email "
-                "ORDER BY mensagens DESC LIMIT 10",
+                """
+                SELECT s.id, s.titulo, u.email, coalesce(msg.mensagens, 0), coalesce(tok.tokens, 0)
+                FROM chat_sessions s
+                JOIN users u ON u.id = s.user_id
+                JOIN (
+                    SELECT session_id, count(*) AS mensagens
+                    FROM chat_messages
+                    WHERE papel = 'user'
+                    GROUP BY session_id
+                ) msg ON msg.session_id = s.id
+                LEFT JOIN (
+                    SELECT session_id, sum(output_tokens) AS tokens
+                    FROM cache_usage_log
+                    GROUP BY session_id
+                ) tok ON tok.session_id = s.id
+                WHERE s.atualizado_em >= now() - (%s || ' days')::interval
+                ORDER BY msg.mensagens DESC LIMIT 10
+                """,
                 (dias,),
             )
             sessoes_ativas = [
