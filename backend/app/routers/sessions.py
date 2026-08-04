@@ -1,10 +1,10 @@
 """Rotas de sessões de chat (protegidas), incluindo /compact."""
 
-import anthropic
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.config import MODEL, client, get_user_or_ip, limiter
+from app.config import get_user_or_ip, limiter
 from app.deps import requer_senha_atualizada
+from app.llm import LLMConexaoFalhou, LLMErro, LLMLimiteRequisicoes, LLMSobrecarregado, resposta_simples
 from app.repositories.knowledge import criar_conhecimento_pendente
 from app.repositories.sessions import (
     apagar_mensagens,
@@ -99,26 +99,16 @@ def compact_session(
     )
 
     try:
-        resp = client.messages.create(
-            model=MODEL,
-            max_tokens=4096,
-            system=system_resumo,
-            messages=[{"role": "user", "content": conteudo}],
-        )
-    except anthropic.APIStatusError as e:
-        tipo = ""
-        body = getattr(e, "body", None)
-        if isinstance(body, dict):
-            tipo = (body.get("error") or {}).get("type", "")
-        if e.status_code == 529 or tipo == "overloaded_error":
-            return {"ok": False, "mensagem": "⚠️ API sobrecarregada. Tente compactar em alguns segundos."}
-        if e.status_code == 429 or tipo == "rate_limit_error":
-            return {"ok": False, "mensagem": "⚠️ Limite de requisições. Tente de novo em instantes."}
-        return {"ok": False, "mensagem": f"⚠️ Erro da API ({tipo or e.status_code})."}
-    except anthropic.APIConnectionError:
+        novo_resumo, _uso = resposta_simples(system_resumo, conteudo, max_tokens=4096)
+    except LLMSobrecarregado:
+        return {"ok": False, "mensagem": "⚠️ API sobrecarregada. Tente compactar em alguns segundos."}
+    except LLMLimiteRequisicoes:
+        return {"ok": False, "mensagem": "⚠️ Limite de requisições. Tente de novo em instantes."}
+    except LLMConexaoFalhou:
         return {"ok": False, "mensagem": "⚠️ Falha de conexão com a API."}
+    except LLMErro as e:
+        return {"ok": False, "mensagem": f"⚠️ Erro da API ({e})."}
 
-    novo_resumo = "".join(b.text for b in resp.content if b.type == "text").strip()
     if not novo_resumo:
         return {"ok": False, "mensagem": "⚠️ Não foi possível gerar o resumo."}
 

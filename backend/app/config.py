@@ -8,6 +8,7 @@ import anthropic
 import voyageai
 from dotenv import load_dotenv
 from fastapi import Request
+from openai import OpenAI
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -23,15 +24,62 @@ try:
 except ImportError:
     pass
 
-MODEL = "claude-haiku-4-5"
+ANTHROPIC_MODEL = "claude-haiku-4-5"
 
-# Preços do claude-haiku-4-5 (USD por token) — para estimar a economia do
-# prompt caching no painel de admin. Cache write custa 1.25x o input normal;
-# cache read custa 0.1x.
-PRECO_INPUT = 1.00 / 1_000_000
-PRECO_OUTPUT = 5.00 / 1_000_000
-MULT_CACHE_WRITE = 1.25
-MULT_CACHE_READ = 0.1
+# --- Provider de LLM: DeepSeek (default) ou Anthropic ------------------------
+# DeepSeek é OpenAI-compatible e custa ~15x menos que o Haiku no fluxo deste
+# app (ver README, seção "Provider de LLM"). MODELO_PROVIDER=anthropic mantém
+# o comportamento anterior (streaming + imagens + cache_control nativo).
+MODELO_PROVIDER = os.getenv("MODELO_PROVIDER", "deepseek").strip().lower()
+if MODELO_PROVIDER not in ("deepseek", "anthropic"):
+    raise RuntimeError(
+        f"MODELO_PROVIDER inválido: {MODELO_PROVIDER!r} — use 'deepseek' ou 'anthropic'."
+    )
+
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+# Slug explícito — os aliases legados deepseek-chat/deepseek-reasoner foram
+# descontinuados em 24/07/2026.
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+
+if MODELO_PROVIDER == "deepseek" and not DEEPSEEK_API_KEY:
+    # Falha rápido: diferente do aviso brando de SESSION_SECRET, sem essa
+    # chave o provider DEFAULT do app não funciona de jeito nenhum — melhor
+    # travar no startup do que só descobrir na primeira mensagem de chat.
+    raise RuntimeError(
+        "MODELO_PROVIDER=deepseek (default) mas DEEPSEEK_API_KEY não está "
+        "definida no .env. Defina a chave (platform.deepseek.com) ou mude "
+        "MODELO_PROVIDER=anthropic."
+    )
+
+# Client DeepSeek (OpenAI-compatible) — só instanciado se a chave existir;
+# truststore.inject_into_ssl() acima já cobre o TLS corporativo pra qualquer
+# host, sem config extra por client.
+deepseek_client = (
+    OpenAI(base_url="https://api.deepseek.com", api_key=DEEPSEEK_API_KEY, max_retries=4)
+    if DEEPSEEK_API_KEY
+    else None
+)
+
+# Preços por provider (USD por token), pra estimar a economia no painel de
+# admin (/admin/cache-stats). Estruturalmente diferentes: Anthropic cobra
+# input × multiplicador de cache write/read; DeepSeek cobra preço absoluto
+# por cache miss/hit (sem conceito de "cache write" — cache_creation é
+# sempre 0 nela). Nunca somar tokens brutos entre providers e aplicar um
+# preço só — ver admin.py.
+PRECOS = {
+    "anthropic": {
+        "input": 1.00 / 1_000_000,
+        "output": 5.00 / 1_000_000,
+        "cache_write_mult": 1.25,
+        "cache_read_mult": 0.1,
+    },
+    "deepseek": {
+        "miss": 0.14 / 1_000_000,
+        "hit": 0.0028 / 1_000_000,
+        "output": 0.28 / 1_000_000,
+    },
+}
+
 PUBLIC_DIR = Path(__file__).parent.parent.parent / "public"
 FRONTEND_DIST = Path(__file__).parent.parent.parent / "frontend" / "dist"
 

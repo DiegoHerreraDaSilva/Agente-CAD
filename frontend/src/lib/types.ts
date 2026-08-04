@@ -1,6 +1,7 @@
 export type Nivel = "estagiario" | "junior" | "pleno" | "senior";
 export type Role = "engineer" | "admin";
 export type KnowledgeStatus = "pendente" | "aprovado" | "rejeitado";
+export type LlmProvider = "deepseek" | "anthropic";
 
 export interface Usuario {
   id: number;
@@ -9,6 +10,10 @@ export interface Usuario {
   memoria: string;
   role: Role;
   must_change_senha: boolean;
+  // Provider de LLM ativo no backend (config global, não por usuário) —
+  // usado pra decidir se a feature de anexar imagem aparece no chat (não
+  // suportada sob DeepSeek).
+  provider: LlmProvider;
 }
 
 export interface LoginResposta {
@@ -50,6 +55,7 @@ export interface CacheStatsRecente {
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
   output_tokens: number;
+  provider: LlmProvider;
   criado_em: string;
 }
 

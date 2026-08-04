@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages (session_id, id);
 
 -- Log de uso de prompt caching por resposta do chat (para medir economia real).
+-- provider: qual provider (deepseek/anthropic) gerou a linha — necessário
+-- porque as fórmulas de custo de cada um são diferentes (ver /admin/cache-stats).
 CREATE TABLE IF NOT EXISTS cache_usage_log (
     id                          SERIAL PRIMARY KEY,
     session_id                  INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
@@ -51,6 +53,7 @@ CREATE TABLE IF NOT EXISTS cache_usage_log (
     cache_creation_input_tokens INTEGER NOT NULL,
     cache_read_input_tokens     INTEGER NOT NULL,
     output_tokens               INTEGER NOT NULL,
+    provider                    TEXT NOT NULL DEFAULT 'anthropic',
     criado_em                   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

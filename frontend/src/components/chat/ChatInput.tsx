@@ -13,9 +13,12 @@ interface Anexo {
 interface ChatInputProps {
   enviando: boolean;
   onEnviar: (pergunta: string, imagens: string[]) => void;
+  // Anexo de imagem não é suportado sob o provider DeepSeek (formato de
+  // visão OpenAI-compatible não confirmado) — oculta o botão e ignora paste.
+  imagensHabilitadas: boolean;
 }
 
-export default function ChatInput({ enviando, onEnviar }: ChatInputProps) {
+export default function ChatInput({ enviando, onEnviar, imagensHabilitadas }: ChatInputProps) {
   const [pergunta, setPergunta] = useState("");
   const [imagens, setImagens] = useState<Anexo[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -32,6 +35,7 @@ export default function ChatInput({ enviando, onEnviar }: ChatInputProps) {
   }
 
   function handlePaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    if (!imagensHabilitadas) return;
     const itens = e.clipboardData?.items;
     if (!itens) return;
     let achouImagem = false;
@@ -73,43 +77,53 @@ export default function ChatInput({ enviando, onEnviar }: ChatInputProps) {
 
   return (
     <>
-      <div id="anexos" className={imagens.length ? "tem-itens" : ""}>
-        {imagens.map((anexo) => (
-          <motion.div
-            className="anexo-item"
-            key={anexo.id}
-            layout
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.15 }}
-          >
-            <img src={anexo.url} alt="" />
-            <button className="remover" title="Remover imagem" onClick={() => remover(anexo.id)}>×</button>
-          </motion.div>
-        ))}
-      </div>
+      {imagensHabilitadas && (
+        <div id="anexos" className={imagens.length ? "tem-itens" : ""}>
+          {imagens.map((anexo) => (
+            <motion.div
+              className="anexo-item"
+              key={anexo.id}
+              layout
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.15 }}
+            >
+              <img src={anexo.url} alt="" />
+              <button className="remover" title="Remover imagem" onClick={() => remover(anexo.id)}>×</button>
+            </motion.div>
+          ))}
+        </div>
+      )}
       <div id="barra">
-        <input
-          type="file"
-          ref={fileInputRef}
-          accept="image/png,image/jpeg,image/gif,image/webp"
-          multiple
-          hidden
-          onChange={handleFileChange}
-        />
-        <button
-          id="btn-anexar"
-          type="button"
-          aria-label="Anexar imagem"
-          title="Anexar imagem"
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <IconClipe />
-        </button>
+        {imagensHabilitadas && (
+          <>
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              hidden
+              onChange={handleFileChange}
+            />
+            <button
+              id="btn-anexar"
+              type="button"
+              aria-label="Anexar imagem"
+              title="Anexar imagem"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <IconClipe />
+            </button>
+          </>
+        )}
         <textarea
           id="pergunta"
           rows={2}
-          placeholder="Faça uma pergunta sobre CAD/NX... (cole uma imagem com Ctrl+V ou anexe pelo clipe)"
+          placeholder={
+            imagensHabilitadas
+              ? "Faça uma pergunta sobre CAD/NX... (cole uma imagem com Ctrl+V ou anexe pelo clipe)"
+              : "Faça uma pergunta sobre CAD/NX..."
+          }
           value={pergunta}
           onChange={(e) => setPergunta(e.target.value)}
           onPaste={handlePaste}

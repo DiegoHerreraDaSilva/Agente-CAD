@@ -130,6 +130,16 @@ def garantir_schema() -> None:
                     "ALTER TABLE knowledge_entries "
                     "ADD COLUMN IF NOT EXISTS resumo_rag TEXT;"
                 )
+                # Provider (deepseek/anthropic) que gerou cada linha de uso —
+                # necessário porque o histórico pode ter linhas de providers
+                # diferentes, com fórmulas de custo distintas (ver
+                # /admin/cache-stats). Default 'anthropic' preserva o
+                # significado das linhas já existentes antes desta coluna.
+                # Idempotente.
+                cur.execute(
+                    "ALTER TABLE cache_usage_log "
+                    "ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'anthropic';"
+                )
             conn.commit()
     except Exception as e:  # Postgres pode ainda não estar de pé
         print(f"[startup] não foi possível garantir o schema de users: {e}")

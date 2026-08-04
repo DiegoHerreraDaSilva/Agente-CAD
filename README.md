@@ -12,11 +12,11 @@ Prova de conceito de um agente **consultivo** de engenharia CAD/Siemens NX, com:
 - **Anexos no chat**: colar (Ctrl+V) ou anexar imagens, enviadas para a API de visão do Claude junto da pergunta.
 - **Interface moderna** (React + Framer Motion + lucide-react): animações de entrada/hover/clique, cantos arredondados sutis, estados vazios/loading tratados, e botão de copiar em cada resposta do agente.
 
-O agente é **estritamente consultivo** — não executa nada no NX. Modelo usado: `claude-haiku-4-5`.
+O agente é **estritamente consultivo** — não executa nada no NX. Provider de LLM: **DeepSeek** (`deepseek-v4-flash`, default) ou **Anthropic** (`claude-haiku-4-5`), selecionável por `MODELO_PROVIDER` — ver seção "Provider de LLM" abaixo.
 
 ## Stack
 
-Backend em Python (FastAPI + Uvicorn), streaming via SSE, SDK oficial `anthropic`. Embeddings do RAG via **Voyage AI** (`voyageai`). Banco **PostgreSQL 16 com a extensão `pgvector`** (imagem `pgvector/pgvector:pg16`) rodando em Docker — só o banco; o backend roda em venv local. Frontend em **React + TypeScript (Vite)**, com `react-router-dom` para navegação client-side. Em produção, o build estático (`frontend/dist`) é servido pelo próprio FastAPI — um único processo. O backend usa o pacote `truststore` para confiar no certificado da rede corporativa ao chamar as APIs da Anthropic e da Voyage (rede com inspeção TLS) — como `truststore.inject_into_ssl()` patcheia o SSL do processo inteiro, os dois clients herdam essa confiança.
+Backend em Python (FastAPI + Uvicorn), streaming via SSE. Dois providers de LLM por trás de uma seam única (`app/llm.py`): SDK oficial `anthropic` e SDK `openai` (a API da DeepSeek é OpenAI-compatible). Embeddings do RAG via **Voyage AI** (`voyageai`). Banco **PostgreSQL 16 com a extensão `pgvector`** (imagem `pgvector/pgvector:pg16`) rodando em Docker — só o banco; o backend roda em venv local. Frontend em **React + TypeScript (Vite)**, com `react-router-dom` para navegação client-side. Em produção, o build estático (`frontend/dist`) é servido pelo próprio FastAPI — um único processo. O backend usa o pacote `truststore` para confiar no certificado da rede corporativa ao chamar as APIs externas (Anthropic, DeepSeek, Voyage — rede com inspeção TLS) — como `truststore.inject_into_ssl()` patcheia o SSL do processo inteiro, todos os clients herdam essa confiança automaticamente, sem config por client.
 
 > O frontend já foi HTML/CSS/JS puro (sem Node), porque a rede corporativa bloqueava `npm install`. Esse bloqueio foi resolvido depois (certificado corporativo liberado para o npm) e o frontend foi migrado para React visando performance (bundles minificados, code-splitting do painel admin via `React.lazy`) e organização de pastas (componentes/hooks/lib em vez de um `<script>` inline por página).
 
@@ -25,7 +25,7 @@ Backend em Python (FastAPI + Uvicorn), streaming via SSE, SDK oficial `anthropic
 - Python 3.10+
 - Node.js 18+ e npm (para o build do frontend)
 - Docker Desktop (para o Postgres com pgvector)
-- Uma chave da API Anthropic
+- Uma chave da API DeepSeek (provider default — conta pré-paga em https://platform.deepseek.com; ver seção "Provider de LLM") **ou** uma chave da API Anthropic, se for usar `MODELO_PROVIDER=anthropic`
 - Uma chave da API Voyage AI (embeddings do RAG — https://dash.voyageai.com)
 - Um navegador (a interface é servida pelo próprio backend)
 
@@ -38,7 +38,7 @@ git clone https://github.com/DiegoHerreraDaSilva/Agente-CAD.git
 ```bash
 cd backend
 cp .env.example .env          # no Windows PowerShell: copy .env.example .env
-# edite o .env: ANTHROPIC_API_KEY, VOYAGE_API_KEY, POSTGRES_PASSWORD, SESSION_SECRET e ADMIN_EMAILS
+# edite o .env: DEEPSEEK_API_KEY (ou ANTHROPIC_API_KEY + MODELO_PROVIDER=anthropic), VOYAGE_API_KEY, POSTGRES_PASSWORD, SESSION_SECRET e ADMIN_EMAILS
 docker compose up -d          # sobe o Postgres (imagem pgvector/pgvector:pg16) e roda init.sql
 ```
 
@@ -162,8 +162,9 @@ knowledge_entries          cache_usage_log
 ├─ criado_por                ├─ cache_creation_input_tokens
 ├─ status                    ├─ cache_read_input_tokens
 ├─ embedding (vector 1024)   ├─ output_tokens
-├─ resumo_rag (nullable)     └─ criado_em
-└─ criado_em
+├─ resumo_rag (nullable)     ├─ provider ('deepseek'|
+└─ criado_em                 │             'anthropic')
+                             └─ criado_em
 ```
 
 FKs de `chat_sessions`, `chat_messages` e `cache_usage_log` são `ON DELETE CASCADE`. O schema é criado tanto em `init.sql` (volume novo) quanto em `garantir_schema()` no startup do app (`CREATE TABLE IF NOT EXISTS` / `ALTER TABLE ADD COLUMN IF NOT EXISTS`), então atualizações de código nunca exigem recriar o volume Docker.
@@ -250,6 +251,41 @@ O caching é **por prefixo** (`system → messages`): qualquer bloco dinâmico i
 
 O `claude-haiku-4-5` exige ~4096 tokens acumulados no prefixo para cachear de fato; conversas curtas não cacheiam (esperado) — o ganho cresce com o histórico. Validado localmente: numa conversa com prefixo grande, o 2º turno registrou `cache_read_input_tokens` ≈ tamanho do prefixo e `cache_creation` só do delta. O uso real é logado em `cache_usage_log` e exposto no painel `/admin`, com estimativa de custo/economia e filtro por usuário.
 
+Tudo isso (`cache_control`, breakpoints, multiplicador de write/read) é **específico do provider Anthropic**. Sob `MODELO_PROVIDER=deepseek` não existe nenhuma marcação equivalente no request — ver seção seguinte.
+
+### Provider de LLM: DeepSeek (default) x Anthropic
+
+Os 3 pontos do backend que chamam um LLM (`/chat` streaming, `/compact` resumo de sessão, `gerar_resumo_rag` em `knowledge.py`) passam por uma seam única, **`app/llm.py`** — nenhum outro módulo importa o SDK `anthropic`/`openai` diretamente. `MODELO_PROVIDER` (`.env`, default `"deepseek"`) escolhe o branch; os call sites não sabem qual provider está ativo.
+
+**Por que DeepSeek por default:** a API é OpenAI-compatible (`pip install openai`, `base_url="https://api.deepseek.com"`) e custa uma fração do Haiku pro volume deste app — ver "Custo" abaixo. `MODELO_PROVIDER=anthropic` no `.env` volta ao comportamento anterior (streaming + imagens + `cache_control` nativo).
+
+**Diferenças de formato tratadas dentro de `llm.py`:**
+- **System prompt**: Anthropic recebe uma lista de blocos com `cache_control`; DeepSeek recebe uma única mensagem `role: "system"` (os blocos são achatados numa string, `cache_control` é ignorado — a DeepSeek cacheia automaticamente, sem marcação no request).
+- **Thinking mode**: a DeepSeek roda em modo "thinking" (reasoning) por padrão — se ficar ligado sem perceber, cada resposta gasta muito mais tokens de saída (e dinheiro) do que parece. O request explicita `thinking: {"type": "disabled"}` pra desligar de vez. Teste empírico de sanidade: pergunta de uma linha → `completion_tokens` deve ficar em dezenas, não centenas (se vier alto, o thinking ainda está ligado).
+- **Usage normalizado**: `UsoNormalizado` (dataclass em `llm.py`) tem o mesmo shape que `registrar_uso_cache` já esperava do `usage` nativo da Anthropic — só muda quem constrói o objeto:
+
+  | `UsoNormalizado` | Anthropic (`usage` nativo) | DeepSeek |
+  |---|---|---|
+  | `input_tokens` | `input_tokens` | `prompt_cache_miss_tokens` |
+  | `cache_creation_input_tokens` | `cache_creation_input_tokens` | sempre `0` (a DeepSeek não tem conceito de "cache write") |
+  | `cache_read_input_tokens` | `cache_read_input_tokens` | `prompt_cache_hit_tokens` |
+  | `output_tokens` | `output_tokens` | `completion_tokens` |
+- **Streaming + usage**: no formato OpenAI-compatible, receber `usage` num response em streaming exige `stream_options: {"include_usage": True}` — sem isso, o último chunk não traz os tokens.
+- **Erros**: `llm.py` traduz exceptions dos dois SDKs (`anthropic.APIStatusError`/`APIConnectionError` e `openai.RateLimitError`/`APIStatusError`/`APIConnectionError`) pras mesmas 4 classes genéricas (`LLMSobrecarregado`, `LLMLimiteRequisicoes`, `LLMConexaoFalhou`, `LLMErro`) — os call sites capturam só essas, sem saber qual provider está por trás.
+
+**Imagens desativadas sob DeepSeek.** Suporte a visão no formato OpenAI-compatible da DeepSeek não está confirmado — por isso, com `MODELO_PROVIDER=deepseek`, o botão de anexar/colar imagem some no chat (`ChatInput.tsx`, condicionado a `usuario.provider` vindo de `/auth/me`) e `POST /chat` com `imagens` não-vazio retorna 400 mesmo que a requisição chegue de outra forma (defesa em profundidade). Sob `MODELO_PROVIDER=anthropic`, a feature funciona normalmente.
+
+**Contabilidade de custo por provider.** `cache_usage_log.provider` marca qual provider gerou cada linha (default `'anthropic'`, preservando o significado das linhas antigas). Isso importa porque as fórmulas de custo são estruturalmente diferentes — Anthropic cobra input×multiplicador de cache write/read; DeepSeek cobra preço **absoluto** por cache miss/hit, sem conceito de cache write. `/admin/cache-stats` agrupa por `provider`, calcula o custo de cada grupo com a fórmula certa e **soma os valores em dólar** — nunca soma tokens brutos de providers diferentes com um preço só. A tabela de mensagens recentes (`CacheTab.tsx`, painel `/admin`) mostra uma coluna "Provider" pra distinguir visualmente.
+
+**Preços (USD/1M tokens, `app/config.py::PRECOS`):**
+
+| | Input (miss) | Cache read (hit) | Output |
+|---|---|---|---|
+| DeepSeek | $0,14 | $0,0028 | $0,28 |
+| Anthropic (Haiku) | $1,00 (×1,25 em cache write) | $1,00 ×0,1 | $5,00 |
+
+**Custo estimado**: ~$0,007/usuário/dia → ~$3/mês para 20 engenheiros com DeepSeek, contra ~$49/mês com Haiku.
+
 ### Frontend
 
 SPA em React + TypeScript, roteada por `react-router-dom`. A autenticação é resolvida uma vez em `RequireAuth` (busca `/auth/me` e guarda o usuário em `AuthContext`), com guards aninhados que espelham as dependências do backend:
@@ -284,6 +320,10 @@ Build (`npm run build`) gera `frontend/dist`, servido pelo FastAPI: os arquivos 
 13. Respostas do chat começam direto no conteúdo (sem recapitular a pergunta) e não terminam com um resumo do que foi dito; estagiário/júnior continuam recebendo explicação didática do "porquê".
 14. Numa mesma sessão, injetar uma entrada no turno 1 e perguntar de novo sobre o mesmo tema no turno 2 **não** reinjeta (a entrada não aparece nas `entradas` retornadas). No turno 15 (>`RAG_JANELA_REINJECAO`=10 turnos depois), a mesma pergunta reinjeta e grava `{"<id>": 15}` em `chat_sessions.rag_injetadas` (o valor antigo é sobrescrito, não mantido) — a partir daí, ela só volta a ser candidata a partir do turno 25. Rodar `/compact` zera `rag_injetadas` para `{}`.
 15. Aprovar/criar uma entrada de conhecimento longa (>`RESUMO_RAG_MIN_CHARS`) gera `resumo_rag`; uma entrada curta fica com `resumo_rag = NULL` e a injeção usa o conteúdo completo (fallback via `COALESCE`).
+16. Subir o app sem `DEEPSEEK_API_KEY` e `MODELO_PROVIDER=deepseek` (default) falha rápido no startup com mensagem clara (`app/config.py`), em vez de erro obscuro na primeira mensagem de chat.
+17. Com `MODELO_PROVIDER=deepseek`: pergunta de uma linha no chat → `completion_tokens` (mapeado em `cache_usage_log.output_tokens`) fica em dezenas, não centenas (thinking mode desligado); 2º turno da mesma sessão registra `cache_read_input_tokens > 0`; o botão de anexar imagem não aparece e `POST /chat` com `imagens` retorna 400.
+18. Com `MODELO_PROVIDER=anthropic`: streaming, cache de prefixo e anexo de imagem continuam idênticos a antes da migração para `app/llm.py`.
+19. `/admin/cache-stats` com dado misto (linhas `provider='anthropic'` antigas + `provider='deepseek'` novas): `custo_real_usd`/`economia_usd` somam corretamente por grupo — não aplicam a fórmula de um provider aos tokens do outro. A tabela de mensagens recentes (`CacheTab.tsx`) mostra a coluna Provider.
 
 ## Testes de segurança realizados
 
@@ -411,3 +451,7 @@ Escrita/execução real no NX (NXOpen), log de auditoria de acesso administrativ
 **Limitação conhecida — `/auth/login` por IP em rede com NAT.** Diferente de `/chat`/`/compact`, o rate limit de login (5/min) é por IP porque o usuário ainda não está autenticado nesse ponto — não há `user_id` disponível como chave. Numa rede corporativa onde todo mundo sai pelo mesmo IP externo, isso significa que o teto de 5 tentativas/min é compartilhado pela empresa toda: numa manhã de pico com vários engenheiros logando ao mesmo tempo, alguém pode levar `429` mesmo digitando a senha certa. Mitigações possíveis quando isso incomodar na prática: teto mais folgado, um limite combinado por email tentado (em vez de só por IP), ou CAPTCHA — nenhuma foi implementada agora para não aumentar o escopo da POC além do necessário.
 
 **Medição das otimizações de tokens (concisão de tom, dedup de RAG por sessão, `resumo_rag`).** As três otimizações acima foram implementadas e commitadas juntas; o ideal para atribuir o ganho de cada uma isoladamente seria medir `AVG(input_tokens)`, `AVG(output_tokens)` e `AVG(cache_read_input_tokens)` em `cache_usage_log` antes/depois de cada uma, espaçadas por alguns dias de uso real — não foi feito aqui por decisão explícita de entregar tudo de uma vez. Fica como próximo passo, se for necessário justificar o ganho de cada otimização separadamente para a diretoria.
+
+**Tarifa de pico da DeepSeek não é fixa.** A DeepSeek anunciou que vai adotar tarifa dobrada (2x) em horário de pico (fuso de Pequim), sem data efetiva definida no momento em que este provider foi integrado. Horário comercial em Piracicaba cai no fora-de-pico de Pequim, então tende a favorecer — mas o preço não está travado; vale conferir a documentação oficial periodicamente e não assumir os valores de `PRECOS["deepseek"]` em `app/config.py` como permanentes.
+
+**Suporte a imagem sob DeepSeek não verificado.** A feature de anexar/colar imagem no chat foi desativada quando `MODELO_PROVIDER=deepseek` por precaução (não confirmamos se `deepseek-v4-flash` aceita input de visão no formato OpenAI-compatible). Se a DeepSeek confirmar suporte, dá pra reativar em `ChatInput.tsx` (prop `imagensHabilitadas`) e no guard de `chat.py`, implementando a conversão de blocos de imagem Anthropic→OpenAI em `app/llm.py` (hoje o branch DeepSeek assume que nunca recebe imagem).

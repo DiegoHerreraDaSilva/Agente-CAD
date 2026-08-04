@@ -6,15 +6,14 @@ import psycopg
 from pgvector.psycopg import register_vector
 
 from app.config import (
-    MODEL,
     RAG_JANELA_REINJECAO,
     RAG_LIMIAR,
     RAG_TOP_N,
     RESUMO_RAG_MIN_CHARS,
-    client,
 )
 from app.db import _pg_conninfo
 from app.embeddings import embed_documento, embed_documentos_batch, embed_query
+from app.llm import resposta_simples
 
 
 def criar_conhecimento_pendente(titulo: str, conteudo: str, categoria: str, criado_por: str) -> int:
@@ -171,10 +170,8 @@ def gerar_resumo_rag(titulo: str, conteudo: str) -> Optional[str]:
     e retornam None (a injeção cai de volta no conteúdo completo)."""
     if len(conteudo) <= RESUMO_RAG_MIN_CHARS:
         return None
-    resp = client.messages.create(
-        model=MODEL,
-        max_tokens=400,
-        system=(
+    texto, _uso = resposta_simples(
+        system_text=(
             "Condense a entrada de base de conhecimento técnica abaixo para "
             "injeção direta num prompt de chat. Preserve TODOS os parâmetros, "
             "números, nomes de comandos/ferramentas e recomendações — corte só "
@@ -182,10 +179,10 @@ def gerar_resumo_rag(titulo: str, conteudo: str) -> Optional[str]:
             "Responda só com o texto condensado, em português do Brasil, sem "
             "preâmbulo."
         ),
-        messages=[{"role": "user", "content": f"## {titulo}\n{conteudo}"}],
+        user_content=f"## {titulo}\n{conteudo}",
+        max_tokens=400,
     )
-    texto = "".join(b.text for b in resp.content if b.type == "text").strip()
-    return texto or None
+    return texto.strip() or None
 
 
 def atualizar_embedding_se_aprovado(entry_id: int) -> None:
@@ -373,20 +370,25 @@ def recuperar_conhecimento(
     return selecionadas, novo_rag_injetadas
 
 
-def registrar_uso_cache(session_id: int, user_id: int, usage) -> None:
+def registrar_uso_cache(session_id: int, user_id: int, usage, provider: str) -> None:
+    """`usage` é um `UsoNormalizado` (app/llm.py) — mesmo shape independente
+    do provider que gerou a resposta. `provider` fica gravado por linha
+    porque o histórico pode ter linhas Anthropic e DeepSeek convivendo (a
+    fórmula de custo de cada uma é diferente — ver /admin/cache-stats)."""
     with psycopg.connect(_pg_conninfo()) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO cache_usage_log "
                 "(session_id, user_id, input_tokens, cache_creation_input_tokens, "
-                "cache_read_input_tokens, output_tokens) VALUES (%s, %s, %s, %s, %s, %s)",
+                "cache_read_input_tokens, output_tokens, provider) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 (
                     session_id,
                     user_id,
                     usage.input_tokens,
-                    getattr(usage, "cache_creation_input_tokens", 0) or 0,
-                    getattr(usage, "cache_read_input_tokens", 0) or 0,
+                    usage.cache_creation_input_tokens,
+                    usage.cache_read_input_tokens,
                     usage.output_tokens,
+                    provider,
                 ),
             )
         conn.commit()

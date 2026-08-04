@@ -5,7 +5,7 @@ from typing import Optional
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.config import EMAIL_RE, MULT_CACHE_READ, MULT_CACHE_WRITE, PRECO_INPUT, PRECO_OUTPUT
+from app.config import EMAIL_RE, PRECOS
 from app.db import _pg_conninfo
 from app.deps import admin_atual
 from app.repositories.knowledge import (
@@ -106,6 +106,29 @@ def admin_trocar_senha(
 # ---------------------------------------------------------------------------
 # Economia de prompt caching
 # ---------------------------------------------------------------------------
+def _custo_provider(
+    provider: str, input_tok: int, cache_creation: int, cache_read: int, output_tok: int
+) -> tuple[float, float]:
+    """Retorna (custo_real, custo_sem_cache) em USD para um grupo de tokens de
+    UM provider só. As fórmulas são estruturalmente diferentes — Anthropic
+    cobra input×multiplicador de cache; DeepSeek cobra preço absoluto por
+    cache miss/hit (cache_creation sempre 0 nela) — por isso nunca dá pra
+    somar tokens brutos de providers diferentes e aplicar um preço genérico."""
+    p = PRECOS[provider]
+    if provider == "anthropic":
+        custo_real = (
+            input_tok * p["input"]
+            + cache_creation * p["input"] * p["cache_write_mult"]
+            + cache_read * p["input"] * p["cache_read_mult"]
+            + output_tok * p["output"]
+        )
+        custo_sem_cache = (input_tok + cache_creation + cache_read) * p["input"] + output_tok * p["output"]
+    else:  # deepseek
+        custo_real = input_tok * p["miss"] + cache_read * p["hit"] + output_tok * p["output"]
+        custo_sem_cache = (input_tok + cache_creation + cache_read) * p["miss"] + output_tok * p["output"]
+    return custo_real, custo_sem_cache
+
+
 @router.get("/cache-stats")
 def admin_cache_stats(
     admin: dict = Depends(admin_atual),
@@ -117,19 +140,22 @@ def admin_cache_stats(
 
     with psycopg.connect(_pg_conninfo()) as conn:
         with conn.cursor() as cur:
+            # Agrupado por provider: cada grupo tem sua própria fórmula de
+            # custo (ver _custo_provider) — soma-se o CUSTO EM DÓLAR de cada
+            # grupo no fim, nunca os tokens brutos entre providers.
             cur.execute(
-                "SELECT count(*), "
+                "SELECT provider, count(*), "
                 "coalesce(sum(input_tokens), 0), "
                 "coalesce(sum(cache_creation_input_tokens), 0), "
                 "coalesce(sum(cache_read_input_tokens), 0), "
                 "coalesce(sum(output_tokens), 0) "
-                f"FROM cache_usage_log {filtro}",
+                f"FROM cache_usage_log {filtro} GROUP BY provider",
                 params,
             )
-            total_msgs, input_tok, cache_creation, cache_read, output_tok = cur.fetchone()
+            grupos = cur.fetchall()
             cur.execute(
                 "SELECT s.titulo, u.email, l.input_tokens, l.cache_creation_input_tokens, "
-                "l.cache_read_input_tokens, l.output_tokens, l.criado_em "
+                "l.cache_read_input_tokens, l.output_tokens, l.provider, l.criado_em "
                 "FROM cache_usage_log l "
                 "JOIN chat_sessions s ON s.id = l.session_id "
                 "JOIN users u ON u.id = l.user_id "
@@ -145,22 +171,25 @@ def admin_cache_stats(
                     "cache_creation_input_tokens": r[3],
                     "cache_read_input_tokens": r[4],
                     "output_tokens": r[5],
-                    "criado_em": r[6].isoformat(),
+                    "provider": r[6],
+                    "criado_em": r[7].isoformat(),
                 }
                 for r in cur.fetchall()
             ]
 
-    # Custo real (com cache) vs. custo hipotético se tudo fosse input pleno.
-    custo_real = (
-        input_tok * PRECO_INPUT
-        + cache_creation * PRECO_INPUT * MULT_CACHE_WRITE
-        + cache_read * PRECO_INPUT * MULT_CACHE_READ
-        + output_tok * PRECO_OUTPUT
-    )
-    custo_sem_cache = (
-        (input_tok + cache_creation + cache_read) * PRECO_INPUT
-        + output_tok * PRECO_OUTPUT
-    )
+    total_msgs = 0
+    input_tok = cache_creation = cache_read = output_tok = 0
+    custo_real = custo_sem_cache = 0.0
+    for provider, msgs, i_tok, c_creation, c_read, o_tok in grupos:
+        total_msgs += msgs
+        input_tok += i_tok
+        cache_creation += c_creation
+        cache_read += c_read
+        output_tok += o_tok
+        real_grupo, sem_cache_grupo = _custo_provider(provider, i_tok, c_creation, c_read, o_tok)
+        custo_real += real_grupo
+        custo_sem_cache += sem_cache_grupo
+
     economia_usd = max(custo_sem_cache - custo_real, 0.0)
     economia_pct = (economia_usd / custo_sem_cache * 100) if custo_sem_cache > 0 else 0.0
 

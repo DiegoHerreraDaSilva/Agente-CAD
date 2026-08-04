@@ -72,7 +72,7 @@ export default function CacheTab() {
       <table style={{ marginBottom: 24 }}>
         <thead>
           <tr>
-            <th>Sessão</th><th>Usuário</th><th>Input</th><th>Cache write</th><th>Cache read</th><th>Output</th><th>Quando</th>
+            <th>Sessão</th><th>Usuário</th><th>Input</th><th>Cache write</th><th>Cache read</th><th>Output</th><th>Provider</th><th>Quando</th>
           </tr>
         </thead>
         <tbody>
@@ -84,6 +84,7 @@ export default function CacheTab() {
               <td>{fmt(r.cache_creation_input_tokens)}</td>
               <td>{fmt(r.cache_read_input_tokens)}</td>
               <td>{fmt(r.output_tokens)}</td>
+              <td>{r.provider === "deepseek" ? "DeepSeek" : "Anthropic"}</td>
               <td>{(r.criado_em || "").replace("T", " ").slice(0, 16)}</td>
             </tr>
           ))}

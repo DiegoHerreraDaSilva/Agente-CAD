@@ -2,12 +2,12 @@
 
 import json
 
-import anthropic
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from app.config import MODEL, client, get_user_or_ip, limiter
+from app.config import MODELO_PROVIDER, get_user_or_ip, limiter
 from app.deps import requer_senha_atualizada
+from app.llm import LLMConexaoFalhou, LLMErro, LLMLimiteRequisicoes, LLMSobrecarregado, resposta_stream
 from app.prompt import montar_bloco_conhecimento, montar_system_prompt, validar_imagens
 from app.repositories.knowledge import recuperar_conhecimento, registrar_uso_cache
 from app.repositories.sessions import (
@@ -29,6 +29,16 @@ def chat(request: Request, req: ChatRequest, usuario: dict = Depends(requer_senh
     sessao = sessao_do_usuario(req.session_id, usuario["id"])
     if not sessao:
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
+
+    # Suporte a imagem não está confirmado na DeepSeek (formato OpenAI-compatible
+    # de vision) — desativado sob esse provider. A UI já esconde o botão de
+    # anexar/colar; isso é defesa em profundidade caso a requisição chegue
+    # mesmo assim (ex.: sessão antiga com o provider trocado no meio do caminho).
+    if req.imagens and MODELO_PROVIDER == "deepseek":
+        raise HTTPException(
+            status_code=400,
+            detail="Anexos de imagem não são suportados com o provider atual (DeepSeek).",
+        )
 
     imagens_validas = validar_imagens(req.imagens)
 
@@ -105,35 +115,26 @@ def chat(request: Request, req: ChatRequest, usuario: dict = Depends(requer_senh
     def gerar():
         partes: list[str] = []
         try:
-            with client.messages.stream(
-                model=MODEL,
-                max_tokens=8192,
-                system=system_prompt,
-                messages=messages,
-            ) as stream:
-                for texto in stream.text_stream:
-                    partes.append(texto)
-                    yield f"data: {json.dumps({'text': texto})}\n\n"
-                final = stream.get_final_message()
+            texto_stream, usage_out = resposta_stream(system_prompt, messages, max_tokens=8192)
+            for texto in texto_stream:
+                partes.append(texto)
+                yield f"data: {json.dumps({'text': texto})}\n\n"
             # Sucesso: persiste a resposta do assistente e o uso de cache.
             resposta = "".join(partes)
             if resposta.strip():
                 adicionar_mensagem(req.session_id, "assistant", resposta)
-                registrar_uso_cache(req.session_id, usuario["id"], final.usage)
-        except anthropic.APIStatusError as e:
-            tipo = ""
-            body = getattr(e, "body", None)
-            if isinstance(body, dict):
-                tipo = (body.get("error") or {}).get("type", "")
-            if e.status_code == 529 or tipo == "overloaded_error":
-                msg = "⚠️ A API do Claude está sobrecarregada agora. Tente novamente em alguns segundos."
-            elif e.status_code == 429 or tipo == "rate_limit_error":
-                msg = "⚠️ Limite de requisições atingido. Aguarde um momento e tente de novo."
-            else:
-                msg = f"⚠️ Erro da API ({tipo or e.status_code}). Tente novamente."
+                if usage_out:
+                    registrar_uso_cache(req.session_id, usuario["id"], usage_out[0], MODELO_PROVIDER)
+        except LLMSobrecarregado:
+            msg = "⚠️ A API do modelo está sobrecarregada agora. Tente novamente em alguns segundos."
             yield f"data: {json.dumps({'text': msg})}\n\n"
-        except anthropic.APIConnectionError:
+        except LLMLimiteRequisicoes:
+            msg = "⚠️ Limite de requisições atingido. Aguarde um momento e tente de novo."
+            yield f"data: {json.dumps({'text': msg})}\n\n"
+        except LLMConexaoFalhou:
             yield f"data: {json.dumps({'text': '⚠️ Falha de conexão com a API. Verifique a rede e tente novamente.'})}\n\n"
+        except LLMErro as e:
+            yield f"data: {json.dumps({'text': f'⚠️ {e}. Tente novamente.'})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'text': f'⚠️ Erro inesperado: {e}'})}\n\n"
         yield "data: [DONE]\n\n"

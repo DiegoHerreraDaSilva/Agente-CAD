@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.config import limiter
+from app.config import MODELO_PROVIDER, limiter
 from app.deps import requer_senha_atualizada, usuario_atual
 from app.repositories.users import (
     atualizar_memoria,
@@ -66,6 +66,10 @@ def me(usuario: dict = Depends(usuario_atual)):
         "memoria": usuario["memoria"],
         "role": usuario["role"],
         "must_change_senha": usuario["must_change_senha"],
+        # Provider ativo (config global, não por usuário) — reaproveita este
+        # fetch, que o frontend já faz no boot, pra decidir se mostra a
+        # feature de anexar imagem (não suportada sob DeepSeek).
+        "provider": MODELO_PROVIDER,
     }
 
 
