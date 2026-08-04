@@ -4,6 +4,7 @@ import type { AdminUsuario, CacheStats } from "../../lib/types";
 import { use401Redirect } from "../../hooks/use401Redirect";
 import { IconBase, IconEconomia, IconMonitorado } from "../icons/Icons";
 import EmptyState from "../common/EmptyState";
+import { formatarDataHora } from "../../lib/formatarData";
 
 const fmt = (n: number) => new Intl.NumberFormat("pt-BR").format(n);
 
@@ -84,7 +85,7 @@ export default function CacheTab() {
               <td>{fmt(r.cache_creation_input_tokens)}</td>
               <td>{fmt(r.cache_read_input_tokens)}</td>
               <td>{fmt(r.output_tokens)}</td>
-              <td>{(r.criado_em || "").replace("T", " ").slice(0, 16)}</td>
+              <td>{formatarDataHora(r.criado_em || "")}</td>
             </tr>
           ))}
         </tbody>

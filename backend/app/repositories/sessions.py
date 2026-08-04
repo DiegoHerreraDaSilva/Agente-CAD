@@ -12,9 +12,77 @@ def listar_sessoes(user_id: int) -> list[dict]:
     with psycopg.connect(_pg_conninfo()) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, titulo, atualizado_em FROM chat_sessions "
-                "WHERE user_id = %s ORDER BY atualizado_em DESC",
+                "SELECT id, titulo, atualizado_em, pinned FROM chat_sessions "
+                "WHERE user_id = %s ORDER BY pinned DESC, atualizado_em DESC",
                 (user_id,),
+            )
+            linhas = [
+                {"id": r[0], "titulo": r[1], "atualizado_em": r[2].isoformat(), "pinned": r[3]}
+                for r in cur.fetchall()
+            ]
+    return linhas
+
+
+def definir_pin(session_id: int, user_id: int, pinned: bool) -> bool:
+    with psycopg.connect(_pg_conninfo()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE chat_sessions SET pinned = %s WHERE id = %s AND user_id = %s",
+                (pinned, session_id, user_id),
+            )
+            afetadas = cur.rowcount
+        conn.commit()
+    return afetadas > 0
+
+
+def buscar_mensagens(user_id: int, termo: str, limite: int = 30) -> list[dict]:
+    """Busca por conteúdo (ILIKE) nas mensagens do usuário, com trecho de contexto."""
+    padrao = f"%{termo}%"
+    with psycopg.connect(_pg_conninfo()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT m.id, m.session_id, s.titulo, m.papel, m.conteudo, m.criado_em
+                FROM chat_messages m
+                JOIN chat_sessions s ON s.id = m.session_id
+                WHERE s.user_id = %s AND m.conteudo ILIKE %s
+                ORDER BY m.criado_em DESC
+                LIMIT %s
+                """,
+                (user_id, padrao, limite),
+            )
+            linhas = cur.fetchall()
+    resultados = []
+    for r in linhas:
+        conteudo = r[4]
+        idx = conteudo.lower().find(termo.lower())
+        if idx >= 0:
+            inicio = max(0, idx - 40)
+            trecho = ("…" if inicio > 0 else "") + conteudo[inicio: idx + len(termo) + 60].strip()
+        else:
+            trecho = conteudo[:100]
+        resultados.append(
+            {
+                "message_id": r[0],
+                "session_id": r[1],
+                "session_titulo": r[2],
+                "papel": r[3],
+                "trecho": trecho,
+                "criado_em": r[5].isoformat(),
+            }
+        )
+    return resultados
+
+
+def buscar_sessoes_por_titulo(user_id: int, termo: str, limite: int = 15) -> list[dict]:
+    padrao = f"%{termo}%"
+    with psycopg.connect(_pg_conninfo()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, titulo, atualizado_em FROM chat_sessions "
+                "WHERE user_id = %s AND titulo ILIKE %s "
+                "ORDER BY atualizado_em DESC LIMIT %s",
+                (user_id, padrao, limite),
             )
             linhas = [
                 {"id": r[0], "titulo": r[1], "atualizado_em": r[2].isoformat()}
@@ -75,11 +143,14 @@ def carregar_mensagens(session_id: int) -> list[dict]:
     with psycopg.connect(_pg_conninfo()) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT papel, conteudo FROM chat_messages "
+                "SELECT id, papel, conteudo, criado_em FROM chat_messages "
                 "WHERE session_id = %s ORDER BY id",
                 (session_id,),
             )
-            msgs = [{"papel": r[0], "conteudo": r[1]} for r in cur.fetchall()]
+            msgs = [
+                {"id": r[0], "papel": r[1], "conteudo": r[2], "criado_em": r[3].isoformat()}
+                for r in cur.fetchall()
+            ]
     return msgs
 
 
@@ -158,6 +229,42 @@ def definir_resumo(session_id: int, resumo: str) -> None:
                 (resumo, session_id),
             )
         conn.commit()
+
+
+def excluir_ultima_mensagem(session_id: int, papel: str) -> None:
+    """Apaga a última mensagem de um dado papel (usada por regenerar/editar)."""
+    with psycopg.connect(_pg_conninfo()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM chat_messages WHERE id = ("
+                "  SELECT id FROM chat_messages"
+                "  WHERE session_id = %s AND papel = %s"
+                "  ORDER BY id DESC LIMIT 1"
+                ")",
+                (session_id, papel),
+            )
+        conn.commit()
+
+
+def excluir_mensagens_a_partir_de(session_id: int, message_id: int) -> None:
+    """Apaga a mensagem `message_id` e tudo que vem depois dela (edição+reenvio)."""
+    with psycopg.connect(_pg_conninfo()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM chat_messages WHERE session_id = %s AND id >= %s",
+                (session_id, message_id),
+            )
+        conn.commit()
+
+
+def mensagem_pertence_a_sessao(message_id: int, session_id: int) -> bool:
+    with psycopg.connect(_pg_conninfo()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM chat_messages WHERE id = %s AND session_id = %s",
+                (message_id, session_id),
+            )
+            return cur.fetchone() is not None
 
 
 def gerar_titulo(pergunta: str) -> str:

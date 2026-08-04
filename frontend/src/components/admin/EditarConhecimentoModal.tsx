@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { KnowledgeEntry } from "../../lib/types";
 import AnimatedOverlay from "../modal/AnimatedOverlay";
+import { formatarDataHora } from "../../lib/formatarData";
 
 interface EditarConhecimentoModalProps {
   entrada: KnowledgeEntry | null;
@@ -36,7 +37,7 @@ export default function EditarConhecimentoModal({ entrada, onFechar, onSalvar }:
       <h3>{entrada?.status === "aprovado" ? "Editar entrada aprovada" : "Revisar entrada pendente"}</h3>
       {entrada && (
         <p className="dica">
-          Enviado por {entrada.criado_por} em {(entrada.criado_em || "").replace("T", " ").slice(0, 16)}.
+          Enviado por {entrada.criado_por} em {formatarDataHora(entrada.criado_em || "")}.
         </p>
       )}
       <div className="campo">

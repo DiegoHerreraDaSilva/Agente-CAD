@@ -8,16 +8,22 @@ from app.llm import LLMConexaoFalhou, LLMErro, LLMLimiteRequisicoes, LLMSobrecar
 from app.repositories.knowledge import criar_conhecimento_pendente
 from app.repositories.sessions import (
     apagar_mensagens,
+    buscar_mensagens,
+    buscar_sessoes_por_titulo,
     carregar_mensagens,
     criar_sessao,
+    definir_pin,
     definir_resumo,
+    excluir_mensagens_a_partir_de,
     excluir_sessao,
+    excluir_ultima_mensagem,
     gerar_titulo_conhecimento,
     listar_sessoes,
+    mensagem_pertence_a_sessao,
     renomear_sessao,
     sessao_do_usuario,
 )
-from app.schemas import RenameRequest
+from app.schemas import PinRequest, RenameRequest
 
 router = APIRouter(prefix="/sessions")
 
@@ -25,6 +31,17 @@ router = APIRouter(prefix="/sessions")
 @router.get("")
 def get_sessions(usuario: dict = Depends(requer_senha_atualizada)):
     return {"sessions": listar_sessoes(usuario["id"])}
+
+
+@router.get("/search")
+def search_sessions(q: str, usuario: dict = Depends(requer_senha_atualizada)):
+    termo = q.strip()
+    if len(termo) < 2:
+        return {"sessoes": [], "mensagens": []}
+    return {
+        "sessoes": buscar_sessoes_por_titulo(usuario["id"], termo),
+        "mensagens": buscar_mensagens(usuario["id"], termo),
+    }
 
 
 @router.post("")
@@ -59,6 +76,43 @@ def patch_session(
 def delete_session(session_id: int, usuario: dict = Depends(requer_senha_atualizada)):
     if not excluir_sessao(session_id, usuario["id"]):
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
+    return {"ok": True}
+
+
+@router.patch("/{session_id}/pin")
+def patch_pin(session_id: int, req: PinRequest, usuario: dict = Depends(requer_senha_atualizada)):
+    if not definir_pin(session_id, usuario["id"], req.pinned):
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+    return {"ok": True, "pinned": req.pinned}
+
+
+@router.post("/{session_id}/regenerate")
+def regenerate(session_id: int, usuario: dict = Depends(requer_senha_atualizada)):
+    """Remove a última resposta + a pergunta que a gerou; devolve a pergunta
+    para o front reenviar via /chat (fonte única de verdade do fluxo de envio)."""
+    sessao = sessao_do_usuario(session_id, usuario["id"])
+    if not sessao:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+    msgs = carregar_mensagens(session_id)
+    if len(msgs) < 2 or msgs[-1]["papel"] != "assistant" or msgs[-2]["papel"] != "user":
+        raise HTTPException(status_code=400, detail="Nada para regenerar.")
+    pergunta = msgs[-2]["conteudo"]
+    excluir_ultima_mensagem(session_id, "assistant")
+    excluir_ultima_mensagem(session_id, "user")
+    return {"ok": True, "pergunta": pergunta}
+
+
+@router.delete("/{session_id}/messages/{message_id}/rest")
+def delete_message_and_rest(
+    session_id: int, message_id: int, usuario: dict = Depends(requer_senha_atualizada)
+):
+    """Apaga a mensagem e tudo depois dela — usado para editar+reenviar."""
+    sessao = sessao_do_usuario(session_id, usuario["id"])
+    if not sessao:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+    if not mensagem_pertence_a_sessao(message_id, session_id):
+        raise HTTPException(status_code=404, detail="Mensagem não encontrada")
+    excluir_mensagens_a_partir_de(session_id, message_id)
     return {"ok": True}
 
 

@@ -5,21 +5,28 @@ import Sidebar from "../components/chat/Sidebar";
 import MessageBubble from "../components/chat/MessageBubble";
 import ResumoBox from "../components/chat/ResumoBox";
 import ChatInput from "../components/chat/ChatInput";
+import SearchModal from "../components/chat/SearchModal";
+import HelpModal from "../components/chat/HelpModal";
+import FollowUpChips from "../components/chat/FollowUpChips";
 import PerfilModal from "../components/modal/PerfilModal";
 import EmptyState from "../components/common/EmptyState";
-import { IconMensagem } from "../components/icons/Icons";
+import { IconAjuda, IconBuscar, IconExportar, IconMensagem, IconSeta } from "../components/icons/Icons";
 import { useAuthContext } from "../context/AuthContext";
 import { use401Redirect } from "../hooks/use401Redirect";
 import { useChatStream } from "../hooks/useChatStream";
 import { extrairImagensDoConteudo } from "../lib/markdown";
+import { exportarSessaoComoMarkdown } from "../lib/exportSession";
 import {
   ApiError,
   buscarSessao,
   compactarSessao,
   criarSessao,
+  excluirMensagemEResto,
   excluirSessao,
+  fixarSessao,
   listarSessoes,
   logout,
+  regenerarUltimaResposta,
   renomearSessao,
   salvarMemoria,
 } from "../lib/api";
@@ -34,11 +41,13 @@ const NIVEL_LABEL: Record<string, string> = {
 
 interface MensagemUI {
   id: number;
+  msgId?: number;
   papel: "user" | "assistant";
   texto: string;
   imagens?: string[];
   vazio?: boolean;
   erro?: boolean;
+  criadoEm?: string;
 }
 
 export default function ChatPage() {
@@ -51,15 +60,50 @@ export default function ChatPage() {
   const [mensagens, setMensagens] = useState<MensagemUI[]>([]);
   const [resumo, setResumo] = useState("");
   const [perfilAberto, setPerfilAberto] = useState(false);
+  const [buscaAberta, setBuscaAberta] = useState(false);
+  const [ajudaAberta, setAjudaAberta] = useState(false);
   const [carregando, setCarregando] = useState(true);
+  const [mostrarFollowUp, setMostrarFollowUp] = useState(false);
+  const [naoSeguindo, setNaoSeguindo] = useState(false);
 
   const chatRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const idCounter = useRef(0);
   const novoId = () => idCounter.current++;
+  // Auto-scroll só acompanha o fim da conversa enquanto o usuário estiver lá —
+  // se ele rolar pra cima pra reler algo durante o streaming, os próximos
+  // chunks não devem "puxá-lo" de volta.
+  const seguindoRef = useRef(true);
 
   useEffect(() => {
-    chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight });
+    if (seguindoRef.current) {
+      chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight });
+    }
   }, [mensagens, resumo]);
+
+  function onScrollChat() {
+    const el = chatRef.current;
+    if (!el) return;
+    const seguindo = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    seguindoRef.current = seguindo;
+    setNaoSeguindo(!seguindo);
+  }
+
+  function irParaOFim() {
+    seguindoRef.current = true;
+    setNaoSeguindo(false);
+    chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: "smooth" });
+  }
+
+  function mapearMensagens(msgs: { id?: number; papel: "user" | "assistant"; conteudo: string; criado_em?: string }[]): MensagemUI[] {
+    return msgs.map((m) => {
+      if (m.papel === "user") {
+        const { texto, imagens } = extrairImagensDoConteudo(m.conteudo);
+        return { id: novoId(), msgId: m.id, papel: "user" as const, texto, imagens, criadoEm: m.criado_em };
+      }
+      return { id: novoId(), msgId: m.id, papel: "assistant" as const, texto: m.conteudo, criadoEm: m.criado_em };
+    });
+  }
 
   async function carregarSessoes() {
     try {
@@ -73,17 +117,12 @@ export default function ChatPage() {
   async function selecionarSessao(id: number) {
     try {
       const data = await buscarSessao(id);
+      seguindoRef.current = true;
+      setNaoSeguindo(false);
       setSessaoAtivaId(id);
       setResumo(data.resumo || "");
-      setMensagens(
-        data.mensagens.map((m) => {
-          if (m.papel === "user") {
-            const { texto, imagens } = extrairImagensDoConteudo(m.conteudo);
-            return { id: novoId(), papel: "user" as const, texto, imagens };
-          }
-          return { id: novoId(), papel: "assistant" as const, texto: m.conteudo };
-        }),
-      );
+      setMensagens(mapearMensagens(data.mensagens));
+      setMostrarFollowUp(data.mensagens.length > 0 && data.mensagens[data.mensagens.length - 1].papel === "assistant");
     } catch (err) {
       tratar401(err);
     }
@@ -92,9 +131,12 @@ export default function ChatPage() {
   async function novaSessao() {
     try {
       const s = await criarSessao();
+      seguindoRef.current = true;
+      setNaoSeguindo(false);
       setSessaoAtivaId(s.id);
       setMensagens([]);
       setResumo("");
+      setMostrarFollowUp(false);
       await carregarSessoes();
     } catch (err) {
       tratar401(err);
@@ -118,6 +160,43 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Atalhos de teclado globais: Ctrl+K busca, Ctrl+N nova sessão, "/" foca o
+  // input (quando não se está digitando em outro campo), Esc fecha a busca.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const alvo = e.target as HTMLElement;
+      const digitando = alvo.tagName === "INPUT" || alvo.tagName === "TEXTAREA" || alvo.isContentEditable;
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setBuscaAberta(true);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        novaSessao();
+        return;
+      }
+      if (e.key === "/" && !digitando) {
+        e.preventDefault();
+        inputRef.current?.focus();
+        return;
+      }
+      if (e.key === "?" && !digitando) {
+        e.preventDefault();
+        setAjudaAberta(true);
+        return;
+      }
+      if (e.key === "Escape") {
+        if (buscaAberta) setBuscaAberta(false);
+        if (ajudaAberta) setAjudaAberta(false);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buscaAberta, ajudaAberta]);
+
   async function handleRenomear(id: number, titulo: string) {
     try {
       await renomearSessao(id, titulo);
@@ -127,8 +206,21 @@ export default function ChatPage() {
     }
   }
 
+  async function handleFixar(id: number, pinned: boolean) {
+    try {
+      await fixarSessao(id, pinned);
+      await carregarSessoes();
+    } catch (err) {
+      tratar401(err);
+    }
+  }
+
   async function handleExcluir(id: number) {
-    if (!confirm("Excluir esta sessão e todo o seu histórico?")) return;
+    const sessao = sessoes.find((s) => s.id === id);
+    const mensagemConfirm = sessao?.pinned
+      ? "Esta sessão está fixada. Excluir mesmo assim, junto com todo o histórico?"
+      : "Excluir esta sessão e todo o seu histórico?";
+    if (!confirm(mensagemConfirm)) return;
     try {
       await excluirSessao(id);
     } catch (err) {
@@ -177,6 +269,7 @@ export default function ChatPage() {
     }
     if (!sessaoAtivaId) return;
 
+    setMostrarFollowUp(false);
     setMensagens((prev) => [...prev, { id: novoId(), papel: "user", texto, imagens }]);
     const agentId = novoId();
     setMensagens((prev) => [...prev, { id: agentId, papel: "assistant", texto: "", vazio: true }]);
@@ -187,6 +280,10 @@ export default function ChatPage() {
           prev.map((m) => (m.id === agentId ? { ...m, texto: m.texto + chunk, vazio: false } : m)),
         );
       });
+      // Recarrega a sessão do backend pra sincronizar ids/timestamps reais das
+      // mensagens (necessários pra editar/regenerar) sem perder o que já foi
+      // renderizado via streaming.
+      await selecionarSessao(sessaoAtivaId);
     } catch (err) {
       if (tratar401(err)) return;
       const msg = err instanceof ApiError ? `⚠️ ${err.message}` : "⚠️ Falha de conexão com o backend.";
@@ -194,6 +291,39 @@ export default function ChatPage() {
     } finally {
       carregarSessoes();
     }
+  }
+
+  async function onRegenerar() {
+    if (!sessaoAtivaId) return;
+    try {
+      const data = await regenerarUltimaResposta(sessaoAtivaId);
+      setMensagens((prev) => prev.slice(0, -2));
+      setMostrarFollowUp(false);
+      await onEnviarChat(data.pergunta, []);
+    } catch (err) {
+      tratar401(err);
+    }
+  }
+
+  async function onEditarMensagem(msgId: number | undefined, novoTexto: string) {
+    if (!sessaoAtivaId || !msgId) return;
+    try {
+      await excluirMensagemEResto(sessaoAtivaId, msgId);
+      const idx = mensagens.findIndex((m) => m.msgId === msgId);
+      if (idx >= 0) setMensagens((prev) => prev.slice(0, idx));
+      await onEnviarChat(novoTexto, []);
+    } catch (err) {
+      tratar401(err);
+    }
+  }
+
+  function onExportar() {
+    if (!sessaoAtivaId) return;
+    const sessaoAtual = sessoes.find((s) => s.id === sessaoAtivaId);
+    exportarSessaoComoMarkdown(
+      sessaoAtual?.titulo || "conversa",
+      mensagens.map((m) => ({ papel: m.papel, conteudo: m.texto, criado_em: m.criadoEm })),
+    );
   }
 
   async function handleSalvarMemoria(memoria: string) {
@@ -209,6 +339,8 @@ export default function ChatPage() {
     }
   }
 
+  const ultimaAssistantId = [...mensagens].reverse().find((m) => m.papel === "assistant" && !m.vazio)?.id;
+
   return (
     <>
       <Header marca="Assistente Engenharia">
@@ -219,6 +351,15 @@ export default function ChatPage() {
         {usuario.role === "admin" && (
           <Link className="btn-sec" to="/admin">Admin</Link>
         )}
+        <button className="btn-icone" title="Buscar em conversas (Ctrl+K)" onClick={() => setBuscaAberta(true)}>
+          <IconBuscar />
+        </button>
+        <button className="btn-icone" title="Atalhos e comandos" onClick={() => setAjudaAberta(true)}>
+          <IconAjuda />
+        </button>
+        <button className="btn-icone" title="Exportar conversa em Markdown" onClick={onExportar} disabled={!mensagens.length}>
+          <IconExportar />
+        </button>
         <button className="btn-sec" title="Resumir a conversa e liberar contexto" onClick={onCompactar}>
           Compactar
         </button>
@@ -235,10 +376,11 @@ export default function ChatPage() {
           onNova={novaSessao}
           onRenomear={handleRenomear}
           onExcluir={handleExcluir}
+          onFixar={handleFixar}
         />
 
         <div className="main">
-          <div id="chat" ref={chatRef}>
+          <div id="chat" ref={chatRef} onScroll={onScrollChat}>
             {carregando ? (
               <>
                 <div className="skeleton skeleton-msg" />
@@ -256,12 +398,31 @@ export default function ChatPage() {
                   />
                 )}
                 {mensagens.map((m) => (
-                  <MessageBubble key={m.id} papel={m.papel} texto={m.texto} imagens={m.imagens} vazio={m.vazio} erro={m.erro} />
+                  <MessageBubble
+                    key={m.id}
+                    papel={m.papel}
+                    texto={m.texto}
+                    imagens={m.imagens}
+                    vazio={m.vazio}
+                    erro={m.erro}
+                    criadoEm={m.criadoEm}
+                    isUltimaAssistant={m.id === ultimaAssistantId}
+                    onRegenerar={m.id === ultimaAssistantId ? onRegenerar : undefined}
+                    onEditar={m.papel === "user" && m.msgId ? (novo) => onEditarMensagem(m.msgId, novo) : undefined}
+                  />
                 ))}
+                {mostrarFollowUp && !enviando && (
+                  <FollowUpChips onEscolher={(texto) => onEnviarChat(texto, [])} />
+                )}
               </>
             )}
           </div>
-          <ChatInput enviando={enviando} onEnviar={onEnviarChat} />
+          {naoSeguindo && !carregando && (
+            <button className="scroll-to-bottom" onClick={irParaOFim}>
+              <IconSeta /> Novas mensagens
+            </button>
+          )}
+          <ChatInput ref={inputRef} enviando={enviando} onEnviar={onEnviarChat} />
         </div>
       </div>
 
@@ -271,6 +432,8 @@ export default function ChatPage() {
         onFechar={() => setPerfilAberto(false)}
         onSalvar={handleSalvarMemoria}
       />
+      <SearchModal aberto={buscaAberta} onFechar={() => setBuscaAberta(false)} onAbrirSessao={selecionarSessao} />
+      <HelpModal aberto={ajudaAberta} onFechar={() => setAjudaAberta(false)} />
     </>
   );
 }

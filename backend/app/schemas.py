@@ -18,6 +18,15 @@ class RenameRequest(BaseModel):
     titulo: str
 
 
+class PinRequest(BaseModel):
+    pinned: bool
+
+
+class SnippetRequest(BaseModel):
+    titulo: str
+    conteudo: str
+
+
 class RegisterRequest(BaseModel):
     email: str
     senha: str

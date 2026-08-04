@@ -1,6 +1,8 @@
 import type {
   AdminUsuario,
+  BuscaResposta,
   CacheStats,
+  DashboardStats,
   KnowledgeEntry,
   KnowledgeStatus,
   LoginResposta,
@@ -9,6 +11,7 @@ import type {
   Role,
   SessaoDetalhe,
   SessaoResumo,
+  Snippet,
   Usuario,
 } from "./types";
 
@@ -79,6 +82,32 @@ export const excluirSessao = (id: number) => req<{ ok: boolean }>(`/sessions/${i
 
 export const compactarSessao = (id: number) =>
   req<{ ok: boolean; resumo?: string; mensagem?: string }>(`/sessions/${id}/compact`, { method: "POST" });
+
+export const fixarSessao = (id: number, pinned: boolean) =>
+  req<{ ok: boolean; pinned: boolean }>(`/sessions/${id}/pin`, {
+    method: "PATCH",
+    body: JSON.stringify({ pinned }),
+  });
+
+export const regenerarUltimaResposta = (id: number) =>
+  req<{ ok: boolean; pergunta: string }>(`/sessions/${id}/regenerate`, { method: "POST" });
+
+export const excluirMensagemEResto = (sessionId: number, messageId: number) =>
+  req<{ ok: boolean }>(`/sessions/${sessionId}/messages/${messageId}/rest`, { method: "DELETE" });
+
+export const buscarConversas = (q: string) =>
+  req<BuscaResposta>(`/sessions/search?q=${encodeURIComponent(q)}`);
+
+// ---------------------------------------------------------------------------
+// Templates de prompt pessoais
+// ---------------------------------------------------------------------------
+export const listarSnippets = () => req<{ snippets: Snippet[] }>("/snippets");
+
+export const criarSnippet = (titulo: string, conteudo: string) =>
+  req<Snippet>("/snippets", { method: "POST", body: JSON.stringify({ titulo, conteudo }) });
+
+export const excluirSnippet = (id: number) =>
+  req<{ ok: boolean }>(`/snippets/${id}`, { method: "DELETE" });
 
 // ---------------------------------------------------------------------------
 // Chat (streaming SSE)
@@ -158,6 +187,9 @@ export const adminCacheStats = (usuarioId?: number) =>
   req<CacheStats>(
     usuarioId ? `/admin/cache-stats?usuario_id=${encodeURIComponent(usuarioId)}` : "/admin/cache-stats",
   );
+
+export const adminDashboard = (dias = 30) =>
+  req<DashboardStats>(`/admin/dashboard?dias=${dias}`);
 
 // ---------------------------------------------------------------------------
 // Admin — fila de aprovação da base de conhecimento

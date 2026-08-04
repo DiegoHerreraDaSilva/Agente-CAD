@@ -21,11 +21,14 @@ export interface SessaoResumo {
   id: number;
   titulo: string;
   atualizado_em: string;
+  pinned: boolean;
 }
 
 export interface Mensagem {
+  id?: number;
   papel: "user" | "assistant";
   conteudo: string;
+  criado_em?: string;
 }
 
 export interface SessaoDetalhe {
@@ -33,6 +36,70 @@ export interface SessaoDetalhe {
   titulo: string;
   resumo: string;
   mensagens: Mensagem[];
+}
+
+export interface Snippet {
+  id: number;
+  titulo: string;
+  conteudo: string;
+}
+
+export interface BuscaResultadoSessao {
+  id: number;
+  titulo: string;
+  atualizado_em: string;
+}
+
+export interface BuscaResultadoMensagem {
+  message_id: number;
+  session_id: number;
+  session_titulo: string;
+  papel: "user" | "assistant";
+  trecho: string;
+  criado_em: string;
+}
+
+export interface BuscaResposta {
+  sessoes: BuscaResultadoSessao[];
+  mensagens: BuscaResultadoMensagem[];
+}
+
+export interface DashboardVolumeDia {
+  dia: string;
+  mensagens: number;
+}
+
+export interface DashboardHeatmapPonto {
+  dia_semana: number;
+  hora: number;
+  mensagens: number;
+}
+
+export interface DashboardRankingUsuario {
+  email: string;
+  mensagens: number;
+  tokens: number;
+  ultima_atividade: string | null;
+}
+
+export interface DashboardSessaoAtiva {
+  id: number;
+  titulo: string;
+  usuario: string;
+  mensagens: number;
+  tokens: number;
+}
+
+export interface DashboardStats {
+  periodo_dias: number;
+  total_mensagens: number;
+  usuarios_ativos: number;
+  media_mensagens_dia: number;
+  tokens_output: number;
+  volume_diario: DashboardVolumeDia[];
+  heatmap: DashboardHeatmapPonto[];
+  ranking: DashboardRankingUsuario[];
+  sessoes_ativas: DashboardSessaoAtiva[];
 }
 
 export interface AdminUsuario {

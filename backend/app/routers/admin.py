@@ -233,3 +233,119 @@ def admin_excluir_conhecimento(entry_id: int, admin: dict = Depends(admin_atual)
     if not excluir_conhecimento(entry_id):
         raise HTTPException(status_code=404, detail="Entrada não encontrada")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Dashboard de uso — só admin (visão nominal por usuário é ponto sensível,
+# combinado com o usuário: fica restrita ao painel admin).
+# ---------------------------------------------------------------------------
+@router.get("/dashboard")
+def admin_dashboard(
+    admin: dict = Depends(admin_atual),
+    dias: int = Query(30, ge=1, le=365),
+):
+    with psycopg.connect(_pg_conninfo()) as conn:
+        with conn.cursor() as cur:
+            # Cards de resumo
+            cur.execute(
+                "SELECT count(*), count(DISTINCT session_id) "
+                "FROM chat_messages WHERE papel = 'user' AND criado_em >= now() - (%s || ' days')::interval",
+                (dias,),
+            )
+            total_mensagens, _sessoes_ativas = cur.fetchone()
+            cur.execute(
+                "SELECT count(DISTINCT s.user_id) FROM chat_messages m "
+                "JOIN chat_sessions s ON s.id = m.session_id "
+                "WHERE m.criado_em >= now() - (%s || ' days')::interval",
+                (dias,),
+            )
+            usuarios_ativos = cur.fetchone()[0]
+            cur.execute(
+                "SELECT coalesce(sum(output_tokens), 0) FROM cache_usage_log "
+                "WHERE criado_em >= now() - (%s || ' days')::interval",
+                (dias,),
+            )
+            tokens_output = cur.fetchone()[0]
+
+            # Volume por dia
+            cur.execute(
+                "SELECT date_trunc('day', criado_em)::date AS dia, count(*) "
+                "FROM chat_messages "
+                "WHERE papel = 'user' AND criado_em >= now() - (%s || ' days')::interval "
+                "GROUP BY dia ORDER BY dia",
+                (dias,),
+            )
+            volume_diario = [{"dia": r[0].isoformat(), "mensagens": r[1]} for r in cur.fetchall()]
+
+            # Heatmap dia da semana (0=domingo) x hora
+            cur.execute(
+                "SELECT extract(dow FROM criado_em)::int, extract(hour FROM criado_em)::int, count(*) "
+                "FROM chat_messages "
+                "WHERE papel = 'user' AND criado_em >= now() - (%s || ' days')::interval "
+                "GROUP BY 1, 2",
+                (dias,),
+            )
+            heatmap = [{"dia_semana": r[0], "hora": r[1], "mensagens": r[2]} for r in cur.fetchall()]
+
+            # Ranking de usuários (nominal — só admin)
+            cur.execute(
+                "SELECT u.email, count(m.id) AS mensagens, "
+                "coalesce(sum(l.output_tokens), 0) AS tokens, max(m.criado_em) AS ultima "
+                "FROM users u "
+                "LEFT JOIN chat_sessions s ON s.user_id = u.id "
+                "LEFT JOIN chat_messages m ON m.session_id = s.id AND m.papel = 'user' "
+                "  AND m.criado_em >= now() - (%s || ' days')::interval "
+                "LEFT JOIN cache_usage_log l ON l.session_id = s.id "
+                "  AND l.criado_em >= now() - (%s || ' days')::interval "
+                "GROUP BY u.id, u.email "
+                "HAVING count(m.id) > 0 "
+                "ORDER BY mensagens DESC",
+                (dias, dias),
+            )
+            ranking = [
+                {
+                    "email": r[0],
+                    "mensagens": r[1],
+                    "tokens": int(r[2]),
+                    "ultima_atividade": r[3].isoformat() if r[3] else None,
+                }
+                for r in cur.fetchall()
+            ]
+
+            # Sessões mais ativas
+            cur.execute(
+                "SELECT s.id, s.titulo, u.email, count(m.id) AS mensagens, "
+                "coalesce(sum(l.output_tokens), 0) AS tokens "
+                "FROM chat_sessions s "
+                "JOIN users u ON u.id = s.user_id "
+                "JOIN chat_messages m ON m.session_id = s.id "
+                "LEFT JOIN cache_usage_log l ON l.session_id = s.id "
+                "WHERE s.atualizado_em >= now() - (%s || ' days')::interval "
+                "GROUP BY s.id, s.titulo, u.email "
+                "ORDER BY mensagens DESC LIMIT 10",
+                (dias,),
+            )
+            sessoes_ativas = [
+                {
+                    "id": r[0],
+                    "titulo": r[1],
+                    "usuario": r[2],
+                    "mensagens": r[3],
+                    "tokens": int(r[4]),
+                }
+                for r in cur.fetchall()
+            ]
+
+    media_por_dia = round(total_mensagens / dias, 1) if dias else 0.0
+
+    return {
+        "periodo_dias": dias,
+        "total_mensagens": total_mensagens,
+        "usuarios_ativos": usuarios_ativos,
+        "media_mensagens_dia": media_por_dia,
+        "tokens_output": int(tokens_output),
+        "volume_diario": volume_diario,
+        "heatmap": heatmap,
+        "ranking": ranking,
+        "sessoes_ativas": sessoes_ativas,
+    }

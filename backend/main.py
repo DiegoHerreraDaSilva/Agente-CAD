@@ -25,7 +25,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.config import FRONTEND_DIST, SESSION_SECRET, limiter
 from app.db import garantir_schema
 from app.repositories.users import seed_admins
-from app.routers import admin, auth, chat, knowledge, pages, sessions
+from app.routers import admin, auth, chat, knowledge, pages, sessions, snippets
 
 
 @asynccontextmanager
@@ -71,6 +71,7 @@ app.include_router(pages.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(sessions.router)
+app.include_router(snippets.router)
 app.include_router(knowledge.router)
 app.include_router(chat.router)
 

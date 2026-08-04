@@ -13,6 +13,7 @@ import { use401Redirect } from "../../hooks/use401Redirect";
 import { IconAprovado, IconBase, IconBuscar, IconLapis, IconLixeira, IconMais } from "../icons/Icons";
 import EmptyState from "../common/EmptyState";
 import EditarConhecimentoModal from "./EditarConhecimentoModal";
+import { formatarDataHora } from "../../lib/formatarData";
 import NovaConhecimentoModal from "./NovaConhecimentoModal";
 
 interface KnowledgeTabProps {
@@ -166,7 +167,7 @@ export default function KnowledgeTab({ onAviso }: KnowledgeTabProps) {
                 {e.conteudo.length > 140 ? e.conteudo.slice(0, 140) + "…" : e.conteudo}
               </td>
               <td>{e.criado_por}</td>
-              <td>{(e.criado_em || "").replace("T", " ").slice(0, 16)}</td>
+              <td>{formatarDataHora(e.criado_em || "")}</td>
               <td>
                 <div className="acoes">
                   <button className="btn-icone" title="Ver e editar conteúdo completo" onClick={() => setEditando(e)}>

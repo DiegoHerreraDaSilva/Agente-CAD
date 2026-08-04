@@ -136,6 +136,30 @@ def garantir_schema() -> None:
                 cur.execute(
                     "ALTER TABLE cache_usage_log DROP COLUMN IF EXISTS provider;"
                 )
+                # Favoritar/pinar sessões — idempotente.
+                cur.execute(
+                    "ALTER TABLE chat_sessions "
+                    "ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT false;"
+                )
+                # Prompts/templates pessoais salvos por usuário.
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS prompt_snippets (
+                        id        SERIAL PRIMARY KEY,
+                        user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        titulo    TEXT NOT NULL,
+                        conteudo  TEXT NOT NULL,
+                        criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+                    );
+                    """
+                )
+                # Busca full-text simples (ILIKE) sobre mensagens — índice trigram
+                # acelera LIKE '%termo%' sem precisar de tsvector/tsquery.
+                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_chat_messages_conteudo_trgm "
+                    "ON chat_messages USING gin (conteudo gin_trgm_ops);"
+                )
             conn.commit()
     except Exception as e:  # Postgres pode ainda não estar de pé
         print(f"[startup] não foi possível garantir o schema de users: {e}")

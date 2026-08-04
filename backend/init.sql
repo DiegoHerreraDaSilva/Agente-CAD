@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     titulo        TEXT NOT NULL DEFAULT 'Nova sessão',
     resumo        TEXT NOT NULL DEFAULT '',
     rag_injetadas JSONB NOT NULL DEFAULT '{}'::jsonb,
+    pinned        BOOLEAN NOT NULL DEFAULT false,
     criado_em     TIMESTAMPTZ NOT NULL DEFAULT now(),
     atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -41,6 +42,20 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages (session_id, id);
+
+-- Busca por conteúdo (Ctrl+K) via ILIKE acelerada por índice trigram.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_chat_messages_conteudo_trgm
+    ON chat_messages USING gin (conteudo gin_trgm_ops);
+
+-- Prompts/templates pessoais salvos por usuário.
+CREATE TABLE IF NOT EXISTS prompt_snippets (
+    id        SERIAL PRIMARY KEY,
+    user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    titulo    TEXT NOT NULL,
+    conteudo  TEXT NOT NULL,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 -- Log de uso do LLM por resposta do chat (para medir custo real, DeepSeek).
 CREATE TABLE IF NOT EXISTS cache_usage_log (

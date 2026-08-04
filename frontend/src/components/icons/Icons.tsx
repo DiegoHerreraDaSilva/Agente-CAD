@@ -22,6 +22,15 @@ export {
   Check as IconCopiado,
   Search as IconBuscar,
   Plus as IconMais,
+  Star as IconEstrela,
+  RotateCw as IconRegenerar,
+  Download as IconExportar,
+  FileText as IconArquivo,
+  X as IconFechar,
+  LayoutTemplate as IconTemplate,
+  BarChart3 as IconDashboard,
+  HelpCircle as IconAjuda,
+  ArrowDown as IconSeta,
 } from "lucide-react";
 
 export function IconLoader() {

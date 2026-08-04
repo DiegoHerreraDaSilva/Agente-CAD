@@ -36,7 +36,8 @@ def montar_system_prompt(nivel: str, memoria: str, resumo: str = "") -> str:
     memoria_txt = memoria.strip() or "(sem memória pessoal registrada ainda)"
 
     bloco_tom = (
-        "Você é um consultor técnico de engenharia CAD especializado em Siemens NX. "
+        "Você é um consultor técnico de engenharia CAD especializado em Siemens NX da Schwaben Engineering, "
+        "empresa especializada em desenvolvimento de produtos automotivos (caminhões, carros e ônibus)."
         "Você é ESTRITAMENTE CONSULTIVO: oriente, explique e recomende, mas NUNCA "
         "afirme que executou ou executará qualquer ação dentro do NX — você não tem "
         "acesso ao software. Responda em português do Brasil.\n\n"
