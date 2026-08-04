@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import ThemeToggle from "./ThemeToggle";
 
 interface HeaderProps {
   marca: string;
@@ -12,6 +13,7 @@ export default function Header({ marca, children }: HeaderProps) {
       <span className="sep" aria-hidden="true"></span>
       <span className="marca">{marca}</span>
       <span className="spacer"></span>
+      <ThemeToggle />
       {children}
     </header>
   );

@@ -23,7 +23,7 @@ export default function AnimatedOverlay({ aberto, onFechar, children }: Animated
       transition={{ duration: 0.15 }}
     >
       <motion.div
-        className="modal"
+        className="modal card"
         role="dialog"
         aria-modal="true"
         initial={{ opacity: 0, scale: 0.96, y: 8 }}

@@ -45,19 +45,19 @@ export default function CacheTab() {
       </div>
 
       <div className="stat-grid">
-        <div className="stat-card">
+        <div className="stat-card card">
           <div className="icone-rotulo"><IconMonitorado /><span className="rotulo">Mensagens monitoradas</span></div>
           <div className="valor">{stats ? fmt(stats.total_mensagens) : "—"}</div>
         </div>
-        <div className="stat-card acento">
+        <div className="stat-card card">
           <div className="icone-rotulo"><IconBase /><span className="rotulo">Tokens lidos do cache</span></div>
           <div className="valor destaque">{stats ? fmt(stats.cache_read_input_tokens) : "—"}</div>
         </div>
-        <div className="stat-card">
+        <div className="stat-card card">
           <div className="icone-rotulo"><IconBase /><span className="rotulo">Tokens escritos no cache</span></div>
           <div className="valor">{stats ? fmt(stats.cache_creation_input_tokens) : "—"}</div>
         </div>
-        <div className="stat-card acento">
+        <div className="stat-card card">
           <div className="icone-rotulo"><IconEconomia /><span className="rotulo">Economia estimada</span></div>
           <div className="valor destaque">{stats ? stats.economia_pct + "%" : "—"}</div>
           <div className="legenda">

@@ -40,7 +40,7 @@ export default function ChangePasswordPage() {
   return (
     <div className="pagina-auth">
       <motion.div
-        className="cartao-auth"
+        className="cartao-auth card"
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, ease: "easeOut" }}
