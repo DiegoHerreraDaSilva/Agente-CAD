@@ -596,7 +596,11 @@ input, select {
   transition: border-color 0.2s ease-out, box-shadow 0.2s ease-out;
 }
 input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--ring); }
-select option { color: #000; }
+/* O menu nativo do <select> não herda os tokens de tema — vários navegadores
+   ignoram um `background` custom no <option> em tema escuro do SO e desenham
+   o popup escuro por padrão. Forçar cor E fundo juntos garante contraste
+   (texto preto sozinho, sem fundo fixo, ficava ilegível em popup escuro). */
+select option { color: #000; background: #fff; }
 
 .tabs { display: flex; margin-bottom: 20px; border: 1px solid var(--border); border-radius: var(--radius-sm); max-width: 640px; overflow: hidden; }
 .tab {
