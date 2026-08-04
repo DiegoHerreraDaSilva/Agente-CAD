@@ -90,6 +90,9 @@ body {
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 button:focus-visible, a:focus-visible { outline-offset: 1px; }
+/* Inputs/selects já têm seu próprio anel de foco (border-color + box-shadow,
+   mais sutil) — o outline padrão em cima disso ficava grosso/duplicado. */
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; }
 
 #root { display: flex; flex-direction: column; }
 
