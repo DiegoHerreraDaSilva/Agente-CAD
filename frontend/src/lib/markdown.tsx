@@ -17,6 +17,17 @@ function inline(s: string): string {
     .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
 }
 
+// Uma linha de tabela GFM: |a|b| ou a | b (pipes nas pontas opcionais).
+const LINHA_TABELA_RE = /^\s*\|?(.+?)\|?\s*$/;
+// Linha separadora do header: só pipes, hífens, dois-pontos e espaços.
+const SEPARADOR_TABELA_RE = /^\s*\|?[\s:-]+\|[\s:|-]*\|?\s*$/;
+
+function dividirCelulas(linha: string): string[] {
+  const m = linha.match(LINHA_TABELA_RE);
+  const corpo = m ? m[1] : linha;
+  return corpo.split("|").map((c) => c.trim());
+}
+
 export function renderMarkdown(raw: string): string {
   // blocos de código ```...``` extraídos primeiro (não sofrem inline)
   const fences: string[] = [];
@@ -36,7 +47,26 @@ export function renderMarkdown(raw: string): string {
     }
   };
 
-  for (const linha of linhas) {
+  for (let i = 0; i < linhas.length; i++) {
+    const linha = linhas[i];
+    // Tabela GFM: linha com "|" seguida de uma linha separadora (---|---).
+    if (linha.includes("|") && i + 1 < linhas.length && SEPARADOR_TABELA_RE.test(linhas[i + 1])) {
+      fecharLista();
+      const cabecalho = dividirCelulas(linha);
+      html +=
+        "<table><thead><tr>" +
+        cabecalho.map((c) => "<th>" + inline(c) + "</th>").join("") +
+        "</tr></thead><tbody>";
+      i += 2; // pula a linha de header (já processada) e a separadora
+      while (i < linhas.length && linhas[i].includes("|") && linhas[i].trim() !== "") {
+        const celulas = dividirCelulas(linhas[i]);
+        html += "<tr>" + celulas.map((c) => "<td>" + inline(c) + "</td>").join("") + "</tr>";
+        i++;
+      }
+      html += "</tbody></table>";
+      i--; // compensa o i++ do for
+      continue;
+    }
     const fence = linha.match(/^@@F(\d+)@@$/);
     if (fence) {
       fecharLista();

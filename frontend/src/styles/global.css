@@ -312,6 +312,21 @@ header .nivel-badge {
 .msg.agent pre code { background: none; padding: 0; }
 .msg.agent hr { border: none; border-top: 1px solid var(--slate-800); margin: 10px 0; }
 .msg.agent a { color: var(--brand-300); }
+.msg.agent table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 0.9em;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+}
+.msg.agent th, .msg.agent td {
+  border: 1px solid var(--slate-800);
+  padding: 6px 10px;
+  text-align: left;
+}
+.msg.agent th { background: var(--slate-900); color: var(--slate-100); font-weight: 600; }
+.msg.agent tr:nth-child(even) td { background: color-mix(in srgb, var(--slate-900) 40%, transparent); }
 .msg.user img { max-width: 220px; display: block; margin-top: 6px; border-radius: var(--radius-sm); }
 .msg.user img:first-child { margin-top: 0; }
 
@@ -345,42 +360,20 @@ header .nivel-badge {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 0.85em;
 }
-
-#anexos {
-  display: none;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px 20px 0;
-  background: var(--slate-950);
+.resumo-box table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 0.9em;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
 }
-#anexos.tem-itens { display: flex; }
-.anexo-item {
-  position: relative;
-  width: 64px;
-  height: 64px;
-  border: 1px solid var(--slate-700);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
+.resumo-box th, .resumo-box td {
+  border: 1px solid var(--slate-800);
+  padding: 6px 10px;
+  text-align: left;
 }
-.anexo-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.anexo-item .remover {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 18px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.7rem;
-  line-height: 1;
-  color: #fff;
-  background: color-mix(in srgb, var(--slate-950) 70%, transparent);
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
-}
-.anexo-item .remover:hover { background: var(--red-300); color: var(--slate-950); }
+.resumo-box th { background: var(--slate-900); color: var(--slate-100); font-weight: 600; }
 
 #barra {
   display: flex;
@@ -405,22 +398,6 @@ header .nivel-badge {
 }
 #pergunta::placeholder { color: var(--slate-600); }
 #pergunta:focus { border-color: var(--brand-500); }
-
-#btn-anexar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-  color: var(--slate-400);
-  background: transparent;
-  border: 1px solid var(--slate-700);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-#btn-anexar:hover { background: var(--slate-900); color: var(--brand-300); transform: translateY(-1px); }
-#btn-anexar svg { width: 18px; height: 18px; }
 
 #enviar {
   display: flex;
