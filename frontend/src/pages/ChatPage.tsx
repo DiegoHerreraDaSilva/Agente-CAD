@@ -280,10 +280,19 @@ export default function ChatPage() {
           prev.map((m) => (m.id === agentId ? { ...m, texto: m.texto + chunk, vazio: false } : m)),
         );
       });
-      // Recarrega a sessão do backend pra sincronizar ids/timestamps reais das
-      // mensagens (necessários pra editar/regenerar) sem perder o que já foi
-      // renderizado via streaming.
-      await selecionarSessao(sessaoAtivaId);
+      // Busca os ids/timestamps reais do backend (necessários pra editar/
+      // regenerar) e só "cola" nas mensagens já renderizadas, por posição —
+      // NUNCA substitui o array por objetos com `id` (key do React) novos,
+      // senão a lista inteira desmonta/remonta e a animação de entrada
+      // replay em tudo, dando a impressão de que o chat "recarregou".
+      const data = await buscarSessao(sessaoAtivaId);
+      setResumo(data.resumo || "");
+      setMensagens((prev) =>
+        prev.map((m, i) => {
+          const real = data.mensagens[i];
+          return real ? { ...m, msgId: real.id, criadoEm: real.criado_em } : m;
+        }),
+      );
     } catch (err) {
       if (tratar401(err)) return;
       const msg = err instanceof ApiError ? `⚠️ ${err.message}` : "⚠️ Falha de conexão com o backend.";

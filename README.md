@@ -8,7 +8,8 @@ Prova de conceito de um agente **consultivo** de engenharia CAD/Siemens NX, com:
 - **RAG (busca semântica)**: a base de conhecimento não é mais injetada inteira no prompt — as entradas são embeddadas com a **Voyage AI** e guardadas no Postgres (`pgvector`); a cada pergunta, só as top-N entradas mais relevantes são recuperadas por similaridade e injetadas no turno atual.
 - **Compactação de sessão** (`/compact`): resume a conversa via DeepSeek, libera contexto e envia o resumo como proposta de conhecimento compartilhado (fila de aprovação).
 - **Cache automático de prefixo**: a DeepSeek cacheia sozinha o prefixo repetido entre turnos (system + histórico), reduzindo custo/latência em conversas longas — sem marcação explícita no request.
-- **Painel de administração** (TI): gestão de usuários (criar, editar, resetar senha, excluir), aprovação/rejeição/edição/exclusão/criação manual de entradas na base de conhecimento (com busca), e visão de economia de cache.
+- **Painel de administração** (TI): gestão de usuários (criar, editar, resetar senha, excluir), aprovação/rejeição/edição/exclusão/criação manual de entradas na base de conhecimento (com busca), visão de economia de cache, e um **dashboard de uso** (cards de resumo, volume de mensagens por dia, heatmap de horário de pico, ranking de usuários e sessões mais ativas — nominal, restrito ao painel admin).
+- **Produtividade no chat**: busca global por conteúdo (`Ctrl+K`), templates de prompt pessoais salvos por usuário, favoritar/fixar sessões, exportar a conversa em Markdown, timestamp em cada mensagem, sugestões de follow-up após cada resposta, regenerar a última resposta, editar e reenviar uma pergunta anterior (trunca o que vem depois), anexar um arquivo de texto (botão ou arrastar-e-soltar), atalhos de teclado com um modal de ajuda (`?`), auto-scroll que não interrompe o usuário se ele rolar pra cima durante o streaming, e aviso de "ainda processando" se a resposta demorar.
 - **Interface moderna** (React + Tailwind CSS v4 + Framer Motion + lucide-react + `next-themes`): tema claro/escuro com toggle no header, cards em gradiente com contorno de destaque, cantos de 14px, animações de entrada/hover/clique, estados vazios/loading tratados, e botão de copiar em cada resposta do agente.
 
 O agente é **estritamente consultivo** — não executa nada no NX. LLM: **DeepSeek** (`deepseek-v4-flash`), com thinking mode desligado explicitamente. Anexo de imagem no chat não é suportado (visão não confirmada no formato OpenAI-compatible da DeepSeek).
@@ -89,7 +90,7 @@ Depois disso, abra **http://localhost:8000/** — é a única porta usada, front
 
 ```bash
 cd frontend
-npm run dev               # abre em http://localhost:5173, com proxy de /auth,/chat,/sessions,/admin,/knowledge para :8000
+npm run dev               # abre em http://localhost:5173, com proxy de /auth,/chat,/sessions,/snippets,/admin,/knowledge para :8000
 ```
 
 Sem sessão válida, você é redirecionado para `/login`. **Não há autocadastro** — contas são criadas pela TI no painel `/admin` (ou nascem via `ADMIN_EMAILS` no bootstrap). Toda conta nova exige troca de senha no primeiro login.
@@ -117,8 +118,8 @@ nx-agent-poc/
 │       ├── deps.py                 # dependências de auth do FastAPI (usuario_atual, admin_atual...)
 │       ├── prompt.py                # system prompt + bloco de conhecimento recuperado por RAG
 │       ├── embeddings.py             # geração de embeddings via Voyage (RAG)
-│       ├── repositories/              # acesso a dados: users.py, sessions.py, knowledge.py (RAG + indexação)
-│       └── routers/                    # rotas por área: pages, auth, admin, sessions, knowledge, chat
+│       ├── repositories/              # acesso a dados: users.py, sessions.py, knowledge.py (RAG + indexação), snippets.py
+│       └── routers/                    # rotas por área: pages, auth, admin, sessions, snippets, knowledge, chat
 └── frontend/
     ├── vite.config.ts           # proxy de dev para o FastAPI (:8000)
     ├── public/logo.png
@@ -126,15 +127,17 @@ nx-agent-poc/
     └── src/
         ├── main.tsx, App.tsx    # entry point (envolve em ThemeProvider) + rotas (react-router)
         ├── styles/global.css    # @import "tailwindcss" + tokens Schwaben (:root claro / .dark escuro)
-        ├── lib/                 # api.ts (wrappers tipados de cada endpoint), types.ts, markdown.tsx, utils.ts (cn())
+        ├── lib/                 # api.ts (wrappers tipados de cada endpoint), types.ts, markdown.tsx, utils.ts (cn()),
+        │                        # exportSession.ts (export Markdown), formatarData.ts (data/hora pt-BR com timezone)
         ├── hooks/                # useChatStream, use401Redirect
         ├── context/AuthContext.tsx
         ├── components/
         │   ├── auth/            # RequireAuth, RequireSenhaAtualizada, RequireAdmin (guards de rota)
         │   ├── layout/           # Header, ThemeToggle
-        │   ├── chat/             # Sidebar, MessageBubble, ChatInput, ResumoBox
+        │   ├── chat/             # Sidebar, MessageBubble, ChatInput, ResumoBox, SearchModal, HelpModal,
+        │   │                     # SnippetsMenu, FollowUpChips
         │   ├── modal/            # PerfilModal
-        │   └── admin/            # UsersTab, CacheTab, KnowledgeTab, modais de usuário
+        │   └── admin/            # UsersTab, CacheTab, KnowledgeTab, DashboardTab, modais de usuário
         └── pages/                # LoginPage, ChangePasswordPage, ChatPage, AdminPage
 ```
 
@@ -149,24 +152,24 @@ users                    chat_sessions              chat_messages
 ├─ senha_hash (bcrypt)    ├─ titulo                    ├─ papel ('user'|'assistant')
 ├─ nivel (enum)           ├─ resumo (texto, /compact)  ├─ conteudo
 ├─ role ('engineer'|      ├─ rag_injetadas (jsonb)     └─ criado_em
-│         'admin')        ├─ criado_em
-├─ memoria (texto livre)  └─ atualizado_em
-├─ must_change_senha
+│         'admin')        ├─ pinned (favoritar)
+├─ memoria (texto livre)  ├─ criado_em
+├─ must_change_senha      └─ atualizado_em
 └─ criado_em
 
-knowledge_entries          cache_usage_log
-├─ id (PK)                 ├─ id (PK)
-├─ titulo                  ├─ session_id (FK)
-├─ conteudo                ├─ user_id (FK)
-├─ categoria                ├─ input_tokens
-├─ criado_por                ├─ cache_creation_input_tokens
+knowledge_entries          cache_usage_log             prompt_snippets
+├─ id (PK)                 ├─ id (PK)                   ├─ id (PK)
+├─ titulo                  ├─ session_id (FK)           ├─ user_id (FK→users)
+├─ conteudo                ├─ user_id (FK)              ├─ titulo
+├─ categoria                ├─ input_tokens             ├─ conteudo
+├─ criado_por                ├─ cache_creation_input_tokens └─ criado_em
 ├─ status                    ├─ cache_read_input_tokens
 ├─ embedding (vector 1024)   ├─ output_tokens
 ├─ resumo_rag (nullable)     └─ criado_em
 └─ criado_em
 ```
 
-FKs de `chat_sessions`, `chat_messages` e `cache_usage_log` são `ON DELETE CASCADE`. O schema é criado tanto em `init.sql` (volume novo) quanto em `garantir_schema()` no startup do app (`CREATE TABLE IF NOT EXISTS` / `ALTER TABLE ADD COLUMN IF NOT EXISTS`), então atualizações de código nunca exigem recriar o volume Docker.
+FKs de `chat_sessions`, `chat_messages`, `cache_usage_log` e `prompt_snippets` são `ON DELETE CASCADE`. O schema é criado tanto em `init.sql` (volume novo) quanto em `garantir_schema()` no startup do app (`CREATE TABLE IF NOT EXISTS` / `ALTER TABLE ADD COLUMN IF NOT EXISTS`), então atualizações de código nunca exigem recriar o volume Docker. A busca por conteúdo (`GET /sessions/search`) usa `ILIKE` acelerado por um índice trigram (`pg_trgm`) em `chat_messages.conteudo`.
 
 ### As três camadas de memória
 
@@ -221,6 +224,8 @@ A cada `/chat`, `recuperar_conhecimento(pergunta, rag_injetadas, turno_atual)` e
 ### Concisão no tom (economia de tokens de saída)
 
 O bloco de tom (`TOM_POR_NIVEL` em `app/prompt.py`) inclui regras de forma comuns aos quatro níveis: não recapitular a pergunta, não anunciar o que vai fazer, não terminar com um resumo do que já foi dito, e referenciar informação já dada na conversa em vez de repeti-la. Essas regras cortam só a **forma** — a explicação didática do "porquê" (definir termos, passo a passo) continua intacta para estagiário/júnior, que é o objetivo original desses níveis (reduzir a carga dos engenheiros sênior como professores).
+
+Há também uma regra contra um tipo específico de alucinação, detectado ao vivo: numa sessão nova (sem histórico nem resumo), o modelo afirmou algo como "conceitos que você já viu" sobre um assunto nunca mencionado na conversa. O prompt agora proíbe explicitamente afirmar que o engenheiro já viu/sabe/praticou algo a menos que isso tenha aparecido literalmente no histórico de mensagens ou no resumo injetado.
 
 ### Fluxo de uma mensagem de chat
 
@@ -289,6 +294,26 @@ O CSS (`frontend/src/styles/global.css`) segue o design system Schwaben: **Tailw
 - Os componentes existentes **mantiveram os mesmos nomes de classe** de antes da migração (`.btn-primario`, `.sessao-item`, `.modal`, `.badge`, `.stat-card` etc.) — só o CSS por trás de cada um foi reescrito para os tokens novos (`var(--accent)`, `var(--surface)`, `var(--text-muted)` etc. em vez de `var(--brand-600)`/`var(--slate-900)` fixos). Isso evitou reescrever o JSX de cada tela só para trocar de sistema visual; um componente novo, porém, deve usar classes utilitárias Tailwind diretamente (não os nomes de classe antigos).
 - `select option { color: #000; background: #fff; }` é proposital: o menu nativo do `<select>` não herda os tokens de tema, e forçar só a cor do texto (sem fundo) deixava a lista ilegível quando o navegador desenha o popup com fundo escuro por padrão (SO em dark mode).
 
+### Produtividade no chat
+
+- **Atalhos de teclado**: `Ctrl+K` abre a busca, `Ctrl+N` cria uma sessão nova, `/` foca o campo de pergunta (fora de um campo de texto), `?` abre o modal de ajuda (`HelpModal.tsx`, lista todos os atalhos e o comando `/compact`), `Esc` fecha busca/ajuda, `Enter` envia e `Shift+Enter`/`Ctrl+Enter` quebra linha ou força o envio.
+- **Busca global** (`Ctrl+K`, `SearchModal.tsx`): consulta `GET /sessions/search?q=` com debounce de 250ms, retornando sessões cujo título bate e mensagens cujo conteúdo bate (com um trecho de contexto ao redor do termo) — resultado de mensagem abre a sessão correspondente.
+- **Templates de prompt** (`SnippetsMenu.tsx`): salvos por usuário em `prompt_snippets`, acessíveis pelo ícone de template no `ChatInput`; escolher um insere o texto no campo (concatenando se já houver algo digitado).
+- **Favoritar/fixar sessão**: ícone de estrela em cada item da sidebar (`PATCH /sessions/{id}/pin`); sessões fixadas aparecem primeiro, numa seção separada ("Fixadas"). Excluir uma sessão fixada mostra um aviso de confirmação diferente, avisando que ela está fixada.
+- **Exportar conversa** (`lib/exportSession.ts`): baixa a sessão atual como um arquivo `.md`, com autor e timestamp de cada mensagem.
+- **Sugestões de follow-up** (`FollowUpChips.tsx`): depois de cada resposta do agente, três chips fixos ("Pode detalhar mais esse ponto?", "Tem um exemplo prático disso?", "Resume isso em tópicos.") que reenviam o texto ao serem clicados.
+- **Regenerar / editar mensagem**: o botão de regenerar (só na última resposta) chama `POST /sessions/{id}/regenerate`, que apaga a última pergunta+resposta no backend e devolve a pergunta para o front reenviar via `/chat` (fluxo normal de envio, sem duplicar lógica). Editar uma mensagem do usuário chama `DELETE /sessions/{id}/messages/{message_id}/rest` (apaga a mensagem e tudo depois dela) e reenvia o texto editado do mesmo jeito.
+- **Anexar arquivo de texto**: botão de clipe (`ChatInput.tsx`) ou arrastar-e-soltar direto na barra de input — lê `.txt/.log/.md/.csv/.json/.xml` via `FileReader` e injeta o conteúdo num bloco de código no campo de pergunta (puramente client-side; não sobe pro backend como arquivo, vira só texto na mensagem).
+- **Auto-scroll inteligente**: o chat só acompanha o fim da conversa enquanto o usuário estiver lá (`ChatPage.tsx`, `seguindoRef` com margem de 80px); rolar pra cima durante o streaming não é interrompido pelos chunks seguintes, e um botão flutuante ("↓ Novas mensagens") volta ao fim e reativa o auto-scroll.
+- **Aviso de "ainda processando"**: se a resposta do agente demorar mais de 6s pra começar a chegar, um texto aparece abaixo dos pontinhos de "digitando" (`MessageBubble.tsx`), pra diferenciar "vai responder já" de "travou".
+- **Sincronização sem "recarregar" a tela**: depois que o streaming termina, o front busca os ids/timestamps reais do backend e só os "cola" nas mensagens já renderizadas por posição — nunca substitui o array por objetos com uma nova `key` do React, senão a lista inteira desmontaria/remontaria e a animação de entrada replayaria em tudo, dando a falsa impressão de que o chat recarregou.
+
+### Dashboard de uso (admin)
+
+Aba **Dashboard** no painel `/admin` (`DashboardTab.tsx` + `GET /admin/dashboard?dias=`), com seletor de período (7/30/90 dias): cards de resumo (total de mensagens, usuários ativos, média de mensagens/dia, tokens de saída), gráfico de volume de mensagens por dia (com eixos X/Y), heatmap de dia da semana × hora, ranking de usuários (nominal — visão sensível, por isso restrita ao admin) e as sessões mais ativas do período.
+
+As agregações de "mensagens" e "tokens" em `ranking`/`sessoes_ativas` usam subconsultas separadas por `session_id`/`user_id` antes de juntar — fazer os dois `JOIN` (em `chat_messages` e `cache_usage_log`) direto pela sessão causa produto cartesiano (cada mensagem multiplicada por cada linha de uso de tokens da mesma sessão), inflando as duas contagens. As duas visões contam só mensagens do usuário (`papel = 'user'`, i.e. perguntas), pra serem comparáveis entre si.
+
 ## Como validar
 
 0. `cd frontend && npm run build` antes de subir o backend — sem `frontend/dist`, qualquer rota que não seja de API devolve 404 (`main.py` avisa isso explicitamente).
@@ -310,6 +335,12 @@ O CSS (`frontend/src/styles/global.css`) segue o design system Schwaben: **Tailw
 16. Subir o app sem `DEEPSEEK_API_KEY` falha rápido no startup com mensagem clara (`app/config.py`), em vez de erro obscuro na primeira mensagem de chat.
 17. Pergunta de uma linha no chat → `completion_tokens` (mapeado em `cache_usage_log.output_tokens`) fica em dezenas, não centenas (thinking mode desligado); 2º turno da mesma sessão com prefixo repetido registra `cache_read_input_tokens > 0`; o botão de anexar imagem não aparece e `POST /chat` com `imagens` retorna 400.
 18. `/admin/cache-stats` calcula `custo_real_usd`/`economia_usd` com os preços da DeepSeek (`PRECO_MISS`/`PRECO_HIT`/`PRECO_OUTPUT`) e reflete a economia real do cache automático.
+19. `Ctrl+K` abre a busca e encontra sessões/mensagens por conteúdo; `Ctrl+N` cria sessão nova; `/` foca o input; `?` abre o modal de ajuda.
+20. Fixar uma sessão (estrela na sidebar) a move para a seção "Fixadas"; excluí-la mostra um aviso de confirmação diferente do de uma sessão comum.
+21. Editar uma mensagem antiga do usuário e reenviar trunca as mensagens seguintes (backend e tela) e gera uma nova resposta; regenerar a última resposta refaz só ela, sem duplicar a pergunta.
+22. Soltar um arquivo `.txt` na barra de input (ou usar o botão de clipe) injeta o conteúdo no campo de pergunta.
+23. Rolar para cima durante o streaming de uma resposta não puxa o scroll de volta ao fim; o botão "↓ Novas mensagens" aparece e, ao clicar, volta pro fim.
+24. `GET /admin/dashboard?dias=30` retorna números consistentes entre `ranking` (por usuário) e `sessoes_ativas` (por sessão) — a soma das sessões de um usuário no ranking bate com o total dele, sem inflar por causa de JOIN cruzado com `cache_usage_log`.
 
 ## Testes de segurança realizados
 
@@ -390,12 +421,12 @@ Resultado / ações tomadas:
 
 O que testa: se alguma rota em `routers/` (auth, admin, sessions, knowledge, chat, pages) ficou sem a dependência de auth por esquecimento.
 
-Como foi feito: leitura de todas as 28 rotas registradas nos 6 routers + a cadeia de dependências em `app/deps.py` (`usuario_atual → requer_senha_atualizada → admin_atual`), conferindo se cada uma usa a dependência correta para o que faz.
+Como foi feito: leitura de todas as rotas registradas nos 7 routers (`pages, auth, admin, sessions, snippets, knowledge, chat`) + a cadeia de dependências em `app/deps.py` (`usuario_atual → requer_senha_atualizada → admin_atual`), conferindo se cada uma usa a dependência correta para o que faz.
 
 Resultado: nenhuma rota está desprotegida por esquecimento.
 
 - Toda rota admin usa `admin_atual` (que já embute `requer_senha_atualizada` → `usuario_atual` por dependência encadeada).
-- Chat, sessões, `/knowledge` e `/auth/me/memoria` usam `requer_senha_atualizada`.
+- Chat, sessões, `/snippets`, `/knowledge` e `/auth/me/memoria` usam `requer_senha_atualizada`.
 - `usuario_atual` (mais fraco) só aparece em `/auth/me` e `/auth/change-password` — intencional: precisam funcionar mesmo com `must_change_senha=True`, senão o usuário ficaria travado num loop de 403 sem conseguir trocar a própria senha.
 - Rotas realmente públicas (`/auth/register` sempre-403, `/auth/login`, `/auth/logout`, `/logo.png`, `/health`, fallback de SPA) não expõem dado nenhum.
 - `sessions.py`/`chat.py` também conferem *ownership* (`sessao_do_usuario` com `WHERE user_id = ...`), não só autenticação — reforça o teste 3 (IDOR).
@@ -421,14 +452,14 @@ Resultado (obtido):
 
 O que testa: se algum ponto do backend monta uma query SQL grudando (concatenação/f-string/`.format()`) valor de input externo direto na string, em vez de usar placeholder (`%s`) com o valor passado à parte para o driver. Diferente dos itens anteriores, **isso não dá pra testar pelo DevTools do navegador** — é uma falha server-side, no código Python; a verificação foi por leitura de código, não por interação em runtime.
 
-Como foi feito: auditadas as 29 chamadas `cur.execute(...)` existentes em `app/repositories/users.py`, `sessions.py` e `knowledge.py` (todo o SQL cru do backend vive majoritariamente ali, via `psycopg`, sem ORM), conferindo se cada uma usa placeholder `%s` com valores passados à parte, ou se algum trecho interpola valor dinâmico direto na string antes do `execute()`. Como placeholder `%s` protege **valores** mas não protege **identificadores** (nome de tabela/coluna) nem palavras-chave SQL (ex.: direção `ASC`/`DESC` de um `ORDER BY`) — esse tipo de coisa exigiria lista branca, não dá pra parametrizar —, foi feita uma segunda passada específica: busca por todas as 7 ocorrências de `ORDER BY` no backend inteiro (`repositories/` + `routers/`, não só o SQL cru dos repositórios) para confirmar que nenhuma coluna nem direção vem de input do cliente.
+Como foi feito: auditadas as chamadas `cur.execute(...)` em `app/repositories/*.py` e `app/routers/admin.py` (todo o SQL cru do backend vive majoritariamente ali, via `psycopg`, sem ORM), conferindo se cada uma usa placeholder `%s` com valores passados à parte, ou se algum trecho interpola valor dinâmico direto na string antes do `execute()`. Como placeholder `%s` protege **valores** mas não protege **identificadores** (nome de tabela/coluna) nem palavras-chave SQL (ex.: direção `ASC`/`DESC` de um `ORDER BY`) — esse tipo de coisa exigiria lista branca, não dá pra parametrizar —, foi feita uma segunda passada específica: busca por todas as ocorrências de `ORDER BY` no backend inteiro para confirmar que nenhuma coluna nem direção vem de input do cliente.
 
 Resultado: **nenhuma vulnerabilidade encontrada.**
 
-- Toda query com valor dinâmico usa `%s` com os valores passados como tupla separada para `execute()` — nunca concatenados/formatados na própria string SQL.
-- Duas queries (`atualizar_usuario` em `users.py` e `editar_conhecimento` em `knowledge.py`) montam a cláusula `SET` dinamicamente via f-string, mas só com fragmentos literais fixos do próprio código (`"email = %s"`, `"titulo = %s"` etc.), escolhidos por `if campo is not None` — nunca a partir de nome de coluna vindo de input externo. Os valores em si sempre passam por `%s`/tupla. É o padrão comum e seguro de "atualizar só os campos informados". Mesmo padrão em `GET /admin/cache-stats` (`admin.py:114-116`, fora de `repositories/`): a f-string ali só escolhe entre duas strings literais fixas (`"WHERE user_id = %s"` ou `""`) conforme `usuario_id` foi passado ou não — nunca monta nome de coluna a partir de input.
-- **Não existe nenhuma busca `LIKE`/`ILIKE` no backend** — a busca da base de conhecimento (por título/conteúdo/categoria/autor, na aba Base de Conhecimento) é feita inteiramente no cliente (`.filter()`/`.includes()` em JS sobre os dados já carregados), nunca vira uma query SQL com wildcard no servidor. Isso elimina a superfície de risco mais comum (busca textual com `LIKE '%...%'` montado por concatenação).
-- **Nenhuma das 7 ocorrências de `ORDER BY` no backend é dinâmica** — toda coluna e toda direção (`ASC`/`DESC`) usada é um literal fixo escrito no código; não existe endpoint que aceite algo como `?order_by=` ou `?dir=` do cliente. Conferido em `knowledge.py` (3x), `users.py`, `sessions.py` (2x) e `admin.py` (`/cache-stats`).
+- Toda query com valor dinâmico usa `%s` com os valores passados como tupla separada para `execute()` — nunca concatenados/formatados na própria string SQL. Isso vale também para a busca por conteúdo (`GET /sessions/search`, `buscar_mensagens`/`buscar_sessoes_por_titulo` em `repositories/sessions.py`): o termo do usuário vira `f"%{termo}%"` **em Python**, mas esse valor pronto é passado como parâmetro `%s` do `ILIKE %s` — nunca colado na string SQL. É a forma segura de fazer wildcard com `LIKE`/`ILIKE`.
+- Duas queries (`atualizar_usuario` em `users.py` e `editar_conhecimento` em `knowledge.py`) montam a cláusula `SET` dinamicamente via f-string, mas só com fragmentos literais fixos do próprio código (`"email = %s"`, `"titulo = %s"` etc.), escolhidos por `if campo is not None` — nunca a partir de nome de coluna vindo de input externo. Os valores em si sempre passam por `%s`/tupla. É o padrão comum e seguro de "atualizar só os campos informados". Mesmo padrão em `GET /admin/cache-stats` e `GET /admin/dashboard` (`admin.py`, fora de `repositories/`): a f-string ali só escolhe entre strings literais fixas (ex.: `"WHERE user_id = %s"` ou `""`) conforme um filtro foi passado ou não — nunca monta nome de coluna a partir de input.
+- **A busca da base de conhecimento** (por título/conteúdo/categoria/autor, na aba Base de Conhecimento) continua sendo feita inteiramente no cliente (`.filter()`/`.includes()` em JS) — só a busca de **conversas** (`Ctrl+K`, `/sessions/search`) e o dashboard viraram consultas SQL server-side desde a introdução dessas features.
+- **Nenhuma ocorrência de `ORDER BY` no backend é dinâmica** — toda coluna e toda direção (`ASC`/`DESC`) usada é um literal fixo escrito no código; não existe endpoint que aceite algo como `?order_by=` ou `?dir=` do cliente.
 
 ## Fora de escopo (roadmap)
 
