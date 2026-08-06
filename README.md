@@ -59,7 +59,7 @@ python -m venv .venv
 .venv\Scripts\activate         # Windows
 # source .venv/bin/activate    # Linux/macOS
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8001
 ```
 
 O backend garante o schema do banco no startup (idempotente — não precisa recriar o volume Docker ao atualizar o código), incluindo a extensão `vector` e a coluna de embedding.
@@ -84,13 +84,13 @@ npm install
 npm run build            # gera frontend/dist — o FastAPI passa a servir a partir daqui
 ```
 
-Depois disso, abra **http://localhost:8000/** — é a única porta usada, front e back juntos.
+Depois disso, abra **http://localhost:8001/** — é a única porta usada, front e back juntos.
 
-**Desenvolvimento** — com o backend já rodando em `:8000` (passo 2), roda o Vite em paralelo com hot-reload:
+**Desenvolvimento** — com o backend já rodando em `:8001` (passo 2), roda o Vite em paralelo com hot-reload:
 
 ```bash
 cd frontend
-npm run dev               # abre em http://localhost:5173, com proxy de /auth,/chat,/sessions,/snippets,/admin,/knowledge para :8000
+npm run dev               # abre em http://localhost:5173, com proxy de /auth,/chat,/sessions,/snippets,/admin,/knowledge para :8001
 ```
 
 Sem sessão válida, você é redirecionado para `/login`. **Não há autocadastro** — contas são criadas pela TI no painel `/admin` (ou nascem via `ADMIN_EMAILS` no bootstrap). Toda conta nova exige troca de senha no primeiro login.
@@ -121,7 +121,7 @@ nx-agent-poc/
 │       ├── repositories/              # acesso a dados: users.py, sessions.py, knowledge.py (RAG + indexação), snippets.py
 │       └── routers/                    # rotas por área: pages, auth, admin, sessions, snippets, knowledge, chat
 └── frontend/
-    ├── vite.config.ts           # proxy de dev para o FastAPI (:8000)
+    ├── vite.config.ts           # proxy de dev para o FastAPI (:8001)
     ├── public/logo.png
     ├── dist/                    # build de produção (gerado, servido pelo FastAPI)
     └── src/
@@ -327,7 +327,7 @@ As agregações de "mensagens" e "tokens" em `ranking`/`sessoes_ativas` usam sub
 8. Após `/compact`, a entrada some do prompt do chat até um admin aprová-la em `/admin`; rejeitar exclui a linha de `knowledge_entries` mas não altera `chat_sessions.resumo` — a sessão do usuário continua exibindo o resumo normalmente.
 9. Base de conhecimento: editar uma entrada pendente/aprovada, excluir uma aprovada, buscar por texto, e criar uma entrada manualmente (deve aparecer já como "Aprovada").
 10. Botão de copiar em mensagens do agente copia o texto para a área de transferência.
-11. `curl -i http://localhost:8000/` (rodando o build de produção, não `npm run dev`) mostra `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` e `Content-Security-Policy` na resposta; console do navegador sem erros de CSP ao usar o app normalmente (chat, painel admin).
+11. `curl -i http://localhost:8001/` (rodando o build de produção, não `npm run dev`) mostra `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` e `Content-Security-Policy` na resposta; console do navegador sem erros de CSP ao usar o app normalmente (chat, painel admin).
 12. Rate limiting: 6 tentativas seguidas de `POST /auth/login` com senha errada → a 6ª retorna `429`; 21 chamadas seguidas a `POST /chat` → a 21ª retorna `429`; 11 chamadas seguidas a `POST /sessions/{id}/compact` → a 11ª retorna `429`.
 13. Respostas do chat começam direto no conteúdo (sem recapitular a pergunta) e não terminam com um resumo do que foi dito; estagiário/júnior continuam recebendo explicação didática do "porquê".
 14. Numa mesma sessão, injetar uma entrada no turno 1 e perguntar de novo sobre o mesmo tema no turno 2 **não** reinjeta (a entrada não aparece nas `entradas` retornadas). No turno 15 (>`RAG_JANELA_REINJECAO`=10 turnos depois), a mesma pergunta reinjeta e grava `{"<id>": 15}` em `chat_sessions.rag_injetadas` (o valor antigo é sobrescrito, não mantido) — a partir daí, ela só volta a ser candidata a partir do turno 25. Rodar `/compact` zera `rag_injetadas` para `{}`.
@@ -350,7 +350,7 @@ Bateria de testes manuais executada pelo DevTools do navegador (Chrome) contra a
 
 O que testa: se o cookie de sessão pode ser lido por JavaScript malicioso.
 
-Como foi feito: `Application → Cookies → localhost:8000`; conferido o flag `HttpOnly` e o `SameSite` do cookie. Também rodado `document.cookie` no console.
+Como foi feito: `Application → Cookies → localhost:8001`; conferido o flag `HttpOnly` e o `SameSite` do cookie. Também rodado `document.cookie` no console.
 
 Resultado esperado (obtido): `HttpOnly` marcado e `SameSite` definido; `document.cookie` não retorna o cookie de sessão. Isso garante que, mesmo se houver um XSS na página, o cookie não pode ser exfiltrado via JS.
 
@@ -410,7 +410,7 @@ Resultado esperado (obtido): a resposta não expõe stack trace nem caminhos int
 
 O que testa: presença dos headers de segurança e ausência de CORS indevido.
 
-Como foi feito: `Network → (request principal) → Headers → Response Headers`, e `curl -i http://localhost:8000/` no build de produção.
+Como foi feito: `Network → (request principal) → Headers → Response Headers`, e `curl -i http://localhost:8001/` no build de produção.
 
 Resultado / ações tomadas:
 
