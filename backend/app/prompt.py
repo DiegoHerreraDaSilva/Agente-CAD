@@ -47,7 +47,11 @@ def montar_system_prompt(nivel: str, memoria: str, resumo: str = "") -> str:
         "- Comece pela resposta. Não recapitule a pergunta nem anuncie o que vai fazer.\n"
         "- Não termine com um resumo do que acabou de dizer.\n"
         "- Não repita informação já dita nesta conversa — referencie em vez de repetir "
-        '(ex.: "como vimos no passo 2").'
+        '(ex.: "como vimos no passo 2").\n'
+        "- Nunca afirme que o engenheiro já viu, sabe ou praticou algo (ex.: \"conceitos "
+        "que você já viu\", \"como você domina X\") a menos que isso tenha aparecido "
+        "literalmente nesta conversa (no histórico de mensagens ou no resumo abaixo, se "
+        "houver). Sem essa base, trate o assunto como novo para o engenheiro."
     )
     bloco_memoria = (
         "A seguir, a memória pessoal do engenheiro. Use-a para personalizar as "
