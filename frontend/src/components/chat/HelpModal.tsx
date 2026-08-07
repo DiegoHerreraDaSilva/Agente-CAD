@@ -7,7 +7,7 @@ interface HelpModalProps {
 
 const ATALHOS = [
   { tecla: "Ctrl+K", desc: "Buscar em conversas anteriores" },
-  { tecla: "Ctrl+N", desc: "Criar uma nova sessão" },
+  { tecla: "n", desc: "Criar uma nova sessão (fora de um campo de texto)" },
   { tecla: "/", desc: "Focar no campo de pergunta" },
   { tecla: "?", desc: "Abrir esta ajuda" },
   { tecla: "Esc", desc: "Fechar a busca ou um modal aberto" },

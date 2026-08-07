@@ -160,8 +160,11 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Atalhos de teclado globais: Ctrl+K busca, Ctrl+N nova sessão, "/" foca o
+  // Atalhos de teclado globais: Ctrl+K busca, "n" nova sessão, "/" foca o
   // input (quando não se está digitando em outro campo), Esc fecha a busca.
+  // Ctrl+N NÃO é usado de propósito: é um atalho reservado pelo navegador
+  // (abrir nova janela) que nenhuma página consegue interceptar — diferente
+  // de Ctrl+K, que o Chrome/Firefox deixam a página sobrescrever.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const alvo = e.target as HTMLElement;
@@ -172,7 +175,7 @@ export default function ChatPage() {
         setBuscaAberta(true);
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
+      if (e.key.toLowerCase() === "n" && !digitando && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         novaSessao();
         return;

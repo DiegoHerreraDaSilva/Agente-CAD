@@ -296,7 +296,7 @@ O CSS (`frontend/src/styles/global.css`) segue o design system Schwaben: **Tailw
 
 ### Produtividade no chat
 
-- **Atalhos de teclado**: `Ctrl+K` abre a busca, `Ctrl+N` cria uma sessão nova, `/` foca o campo de pergunta (fora de um campo de texto), `?` abre o modal de ajuda (`HelpModal.tsx`, lista todos os atalhos e o comando `/compact`), `Esc` fecha busca/ajuda, `Enter` envia e `Shift+Enter`/`Ctrl+Enter` quebra linha ou força o envio.
+- **Atalhos de teclado**: `Ctrl+K` abre a busca, `n` cria uma sessão nova (fora de um campo de texto — `Ctrl+N` não dá pra usar aqui: é um atalho reservado do navegador para abrir nova janela, que nenhuma página consegue interceptar), `/` foca o campo de pergunta, `?` abre o modal de ajuda (`HelpModal.tsx`, lista todos os atalhos e o comando `/compact`), `Esc` fecha busca/ajuda, `Enter` envia e `Shift+Enter`/`Ctrl+Enter` quebra linha ou força o envio.
 - **Busca global** (`Ctrl+K`, `SearchModal.tsx`): consulta `GET /sessions/search?q=` com debounce de 250ms, retornando sessões cujo título bate e mensagens cujo conteúdo bate (com um trecho de contexto ao redor do termo) — resultado de mensagem abre a sessão correspondente.
 - **Templates de prompt** (`SnippetsMenu.tsx`): salvos por usuário em `prompt_snippets`, acessíveis pelo ícone de template no `ChatInput`; escolher um insere o texto no campo (concatenando se já houver algo digitado).
 - **Favoritar/fixar sessão**: ícone de estrela em cada item da sidebar (`PATCH /sessions/{id}/pin`); sessões fixadas aparecem primeiro, numa seção separada ("Fixadas"). Excluir uma sessão fixada mostra um aviso de confirmação diferente, avisando que ela está fixada.
@@ -335,7 +335,7 @@ As agregações de "mensagens" e "tokens" em `ranking`/`sessoes_ativas` usam sub
 16. Subir o app sem `DEEPSEEK_API_KEY` falha rápido no startup com mensagem clara (`app/config.py`), em vez de erro obscuro na primeira mensagem de chat.
 17. Pergunta de uma linha no chat → `completion_tokens` (mapeado em `cache_usage_log.output_tokens`) fica em dezenas, não centenas (thinking mode desligado); 2º turno da mesma sessão com prefixo repetido registra `cache_read_input_tokens > 0`; o botão de anexar imagem não aparece e `POST /chat` com `imagens` retorna 400.
 18. `/admin/cache-stats` calcula `custo_real_usd`/`economia_usd` com os preços da DeepSeek (`PRECO_MISS`/`PRECO_HIT`/`PRECO_OUTPUT`) e reflete a economia real do cache automático.
-19. `Ctrl+K` abre a busca e encontra sessões/mensagens por conteúdo; `Ctrl+N` cria sessão nova; `/` foca o input; `?` abre o modal de ajuda.
+19. `Ctrl+K` abre a busca e encontra sessões/mensagens por conteúdo; `n` (fora de um campo de texto) cria sessão nova; `/` foca o input; `?` abre o modal de ajuda.
 20. Fixar uma sessão (estrela na sidebar) a move para a seção "Fixadas"; excluí-la mostra um aviso de confirmação diferente do de uma sessão comum.
 21. Editar uma mensagem antiga do usuário e reenviar trunca as mensagens seguintes (backend e tela) e gera uma nova resposta; regenerar a última resposta refaz só ela, sem duplicar a pergunta.
 22. Soltar um arquivo `.txt` na barra de input (ou usar o botão de clipe) injeta o conteúdo no campo de pergunta.
