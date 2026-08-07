@@ -1,5 +1,6 @@
 """Acesso a dados da base de conhecimento compartilhada e do log de cache."""
 
+import re
 from typing import Optional
 
 import psycopg
@@ -306,6 +307,27 @@ def reindexar_aprovadas(apenas_faltando: bool = False, chunk: int = 100) -> tupl
     return processadas, falhas
 
 
+# Saudações/confirmações curtas não têm assunto técnico nenhum pra buscar —
+# mesmo assim, o score de similaridade de embedding raramente cai a zero (o
+# espaço vetorial tem uma similaridade "de fundo" natural), então uma mensagem
+# como "olá" podia passar do RAG_LIMIAR e injetar uma entrada da base sem
+# relação nenhuma com o que foi perguntado. O modelo, então, respondia sobre
+# aquele conteúdo injetado como se tivesse sido isso que o usuário perguntou —
+# bug observado ao vivo (pergunta "olá" → resposta inteira sobre "View
+# Dependent Edit"). Detectado aqui, ANTES de gastar uma chamada de embedding.
+_SAUDACAO_RE = re.compile(
+    r"^(oi+|ol[aá]+|e\s*a[ií]|bom\s*dia|boa\s*tarde|boa\s*noite|tudo\s*bem\??|"
+    r"blz|beleza|ok(ay)?|certo|entendi|show|valeu|obrigad[oa]|de\s*nada)[.!?\s]*$",
+    re.IGNORECASE,
+)
+
+
+def eh_mensagem_trivial(pergunta: str) -> bool:
+    """Saudação/confirmação sem conteúdo técnico — não vale a pena (nem é
+    seguro) buscar conhecimento pra injetar."""
+    return bool(_SAUDACAO_RE.match(pergunta.strip()))
+
+
 def recuperar_conhecimento(
     pergunta: str, rag_injetadas: dict[str, int], turno_atual: int
 ) -> tuple[list[dict], dict[str, int]]:
@@ -324,6 +346,8 @@ def recuperar_conhecimento(
     persiste o segundo valor na sessão. Degrada graciosamente: se a Voyage
     falhar, retorna ([], rag_injetadas inalterado) e o chat segue sem
     conhecimento recuperado (NÃO cai de volta na base inteira)."""
+    if eh_mensagem_trivial(pergunta):
+        return [], rag_injetadas
     try:
         vetor = embed_query(pergunta)
     except Exception as e:

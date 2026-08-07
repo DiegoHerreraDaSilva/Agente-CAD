@@ -84,10 +84,13 @@ def montar_bloco_conhecimento(entradas: list[dict]) -> str:
         f"## {e['titulo']}\n{e['conteudo']}" for e in entradas
     )
     return (
-        "Base de conhecimento da equipe relevante para esta pergunta (recuperada "
-        "por similaridade semântica). Use como referência de boas práticas e "
-        "decisões já validadas:\n"
-        "--- CONHECIMENTO RECUPERADO ---\n"
+        "Material de apoio recuperado por similaridade semântica (pode ou não "
+        "ser relevante — a busca é automática, não é garantia de relação com a "
+        "pergunta). Use como referência SÓ SE o assunto abaixo tiver relação "
+        "direta com o que o engenheiro perguntou de fato. Se não tiver relação, "
+        "ignore este bloco por completo e responda apenas à pergunta em si — "
+        "NUNCA trate o conteúdo abaixo como se fosse o assunto perguntado:\n"
+        "--- CONHECIMENTO RECUPERADO (pode ser irrelevante) ---\n"
         f"{corpo}\n"
         "--- FIM DO CONHECIMENTO ---"
     )
