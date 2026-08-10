@@ -56,7 +56,7 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate         # Windows
+.venv\Scripts\activate       # Windows
 # source .venv/bin/activate    # Linux/macOS
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8001
@@ -244,9 +244,15 @@ POST /chat {session_id, pergunta}
 
 Erros de sobrecarga/limite da API (mesmo no meio do streaming) são traduzidos por `app/llm.py` em 4 exceptions genéricas (`LLMSobrecarregado`, `LLMLimiteRequisicoes`, `LLMConexaoFalhou`, `LLMErro`) e viram uma mensagem amigável no chat, sem derrubar a conexão. `/compact` usa `max_tokens=4096` na chamada não-streaming que gera o resumo — ambos os limites foram calibrados para não cortar respostas longas no meio.
 
-### LLM: DeepSeek
+### LLM: DeepSeek (padrão) / OpenRouter (teste)
 
-O backend chama a DeepSeek (API OpenAI-compatible, `pip install openai`, `base_url="https://api.deepseek.com"`) através de uma seam única, **`app/llm.py`** — nenhum outro módulo importa o SDK `openai` ou toca em `deepseek_client` (`app/config.py`) diretamente. Os 3 pontos que precisam de LLM (`/chat` streaming, `/compact` resumo de sessão, `gerar_resumo_rag` em `knowledge.py`) chamam só `resposta_stream()`/`resposta_simples()`.
+O backend chama a DeepSeek (API OpenAI-compatible, `pip install openai`, `base_url="https://api.deepseek.com"`) através de uma seam única, **`app/llm.py`** — nenhum outro módulo importa o SDK `openai` ou toca em `llm_client`/`LLM_MODEL` (`app/config.py`) diretamente. Os 3 pontos que precisam de LLM (`/chat` streaming, `/compact` resumo de sessão, `gerar_resumo_rag` em `knowledge.py`) chamam só `resposta_stream()`/`resposta_simples()`.
+
+**Testar com o OpenRouter.** `LLM_PROVIDER=openrouter` no `.env` (junto de `OPENROUTER_API_KEY` e opcionalmente `OPENROUTER_MODEL`, ver `.env.example`) troca o LLM do app inteiro pro OpenRouter — mesmo formato OpenAI-compatible, só muda `base_url`/`api_key`/`model` em `app/config.py`. É só pra teste/comparação; o padrão sem essa variável continua sendo a DeepSeek direto. Duas diferenças tratadas automaticamente por provider:
+
+- **`thinking` (extra_body) só é enviado pra DeepSeek** — é uma extensão proprietária dela; mandar isso pra outro modelo via OpenRouter não faria sentido (o modelo de teste padrão, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, é inclusive um modelo de reasoning por si só).
+- **Usage sem detalhe de cache**: `_normalizar_usage()` em `llm.py` usa `getattr` com fallback pros campos padrão da OpenAI (`prompt_tokens`/`completion_tokens`) quando os campos específicos da DeepSeek (`prompt_cache_miss_tokens`/`prompt_cache_hit_tokens`) não vêm na resposta — evita `AttributeError` com qualquer provider.
+- **Preço zerado no modo OpenRouter** (`PRECO_MISS`/`PRECO_HIT`/`PRECO_OUTPUT` = 0 em `config.py`): não há tabela de preço por modelo do OpenRouter integrada ainda, então `/admin/cache-stats` mostraria custo incorreto — zerado de propósito enquanto for só teste (o modelo padrão sugerido, aliás, é `:free`).
 
 **Thinking mode.** A DeepSeek roda em modo "thinking" (reasoning) por padrão — se ficar ligado sem perceber, cada resposta gasta muito mais tokens de saída (e dinheiro) do que parece. O request explicita `extra_body={"thinking": {"type": "disabled"}}` pra desligar de vez (`thinking` é extensão específica da DeepSeek, fora do schema padrão OpenAI — o SDK só aceita esse tipo de parâmetro via `extra_body`). Teste empírico de sanidade: pergunta de uma linha → `completion_tokens` deve ficar em dezenas, não centenas (se vier alto, o thinking ainda está ligado). Validado com a API real: 8 tokens de output numa resposta de uma linha.
 
