@@ -79,6 +79,16 @@ if not SESSION_SECRET:
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+# --- Anexo de imagem no chat --------------------------------------------------
+# Formato OpenAI-compatible (image_url com data URL) — funciona com qualquer
+# provider/modelo com suporte a visão (a DeepSeek não suporta; verificar o
+# modelo escolhido se estiver usando LLM_PROVIDER=openrouter). Validado em
+# app/prompt.py:validar_imagens antes de repassar à API.
+MAX_IMAGENS_POR_MENSAGEM = 4
+MAX_BYTES_POR_IMAGEM = 5 * 1024 * 1024
+MEDIA_TYPES_PERMITIDOS = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+DATA_URL_RE = re.compile(r"^data:(image/[a-zA-Z+]+);base64,(.+)$", re.DOTALL)
+
 # Emails que viram admin (TI) automaticamente ao logar/cadastrar.
 ADMIN_EMAILS = {
     e.strip().lower()

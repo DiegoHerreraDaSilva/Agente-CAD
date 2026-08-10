@@ -1,4 +1,16 @@
-"""Montagem do system prompt e do bloco de conhecimento recuperado por RAG."""
+"""Montagem do system prompt, do bloco de conhecimento recuperado por RAG e
+validação de imagens anexadas."""
+
+import base64
+
+from fastapi import HTTPException
+
+from app.config import (
+    DATA_URL_RE,
+    MAX_BYTES_POR_IMAGEM,
+    MAX_IMAGENS_POR_MENSAGEM,
+    MEDIA_TYPES_PERMITIDOS,
+)
 
 TOM_POR_NIVEL = {
     "estagiario": (
@@ -100,3 +112,31 @@ def montar_bloco_conhecimento(entradas: list[dict]) -> str:
         f"{corpo}\n"
         "--- FIM DO CONHECIMENTO ---"
     )
+
+
+def validar_imagens(imagens: list[str]) -> list[str]:
+    """Valida data URLs de imagens coladas/anexadas no chat (formato, tipo
+    MIME e tamanho). Retorna a mesma lista de data URLs (já validada) — o
+    formato OpenAI-compatible aceita a data URL inteira em `image_url.url`,
+    sem precisar separar media_type/base64 como no formato da Anthropic.
+    Levanta HTTPException se algo estiver fora do esperado (evita repassar
+    lixo/arquivos grandes à API)."""
+    if len(imagens) > MAX_IMAGENS_POR_MENSAGEM:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Máximo de {MAX_IMAGENS_POR_MENSAGEM} imagens por mensagem.",
+        )
+    for data_url in imagens:
+        m = DATA_URL_RE.match(data_url)
+        if not m:
+            raise HTTPException(status_code=400, detail="Imagem em formato inválido.")
+        media_type, b64data = m.group(1), m.group(2)
+        if media_type not in MEDIA_TYPES_PERMITIDOS:
+            raise HTTPException(status_code=400, detail=f"Tipo de imagem não suportado: {media_type}")
+        try:
+            bruto = base64.b64decode(b64data, validate=True)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Imagem corrompida (base64 inválido).")
+        if len(bruto) > MAX_BYTES_POR_IMAGEM:
+            raise HTTPException(status_code=400, detail="Imagem excede o limite de 5 MB.")
+    return imagens

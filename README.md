@@ -12,7 +12,7 @@ Prova de conceito de um agente **consultivo** de engenharia CAD/Siemens NX, com:
 - **Produtividade no chat**: busca global por conteúdo (`Ctrl+K`), templates de prompt pessoais salvos por usuário, favoritar/fixar sessões, exportar a conversa em Markdown, timestamp em cada mensagem, sugestões de follow-up após cada resposta, regenerar a última resposta, editar e reenviar uma pergunta anterior (trunca o que vem depois), anexar um arquivo de texto (botão ou arrastar-e-soltar), atalhos de teclado com um modal de ajuda (`?`), auto-scroll que não interrompe o usuário se ele rolar pra cima durante o streaming, e aviso de "ainda processando" se a resposta demorar.
 - **Interface moderna** (React + Tailwind CSS v4 + Framer Motion + lucide-react + `next-themes`): tema claro/escuro com toggle no header, cards em gradiente com contorno de destaque, cantos de 14px, animações de entrada/hover/clique, estados vazios/loading tratados, e botão de copiar em cada resposta do agente.
 
-O agente é **estritamente consultivo** — não executa nada no NX. LLM: **DeepSeek** (`deepseek-v4-flash`), com thinking mode desligado explicitamente. Anexo de imagem no chat não é suportado (visão não confirmada no formato OpenAI-compatible da DeepSeek).
+O agente é **estritamente consultivo** — não executa nada no NX. LLM: **DeepSeek** (`deepseek-v4-flash`), com thinking mode desligado explicitamente (ou **OpenRouter** em modo de teste, ver seção "LLM: DeepSeek"). Anexo/paste de imagem no chat é suportado (formato `image_url` OpenAI-compatible) — depende do modelo ter suporte a visão; a DeepSeek (provider padrão) **não** suporta.
 
 ## Stack
 
@@ -230,14 +230,14 @@ Há também uma regra contra um tipo específico de alucinação, detectado ao v
 ### Fluxo de uma mensagem de chat
 
 ```
-POST /chat {session_id, pergunta}
-  → valida sessão e login; rejeita (400) se vier imagem anexada (não suportado)
-  → grava a pergunta em chat_messages
+POST /chat {session_id, pergunta, imagens}
+  → valida sessão e login; valida imagens (formato/tipo/tamanho, ver validar_imagens)
+  → grava a pergunta (+ marcações Markdown das imagens, se houver) em chat_messages
   → monta o histórico completo (multi-turn) da sessão
   → RAG: embedda a pergunta (Voyage) e recupera top-N entradas por similaridade (pgvector),
     deduplicando contra o que já foi injetado nesta sessão
   → system prompt: [tom por nível] + [memória pessoal] + [resumo]  (string única)
-  → turno atual: [conhecimento recuperado (se houver)] + [pergunta]
+  → turno atual: [conhecimento recuperado (se houver)] + [pergunta] (+ [imagens], se houver — content vira lista de partes text/image_url)
   → app.llm.resposta_stream(...) — streaming SSE token a token, thinking mode desligado
   → ao final: captura uso de tokens (incl. cache automático) e grava a resposta + o log de custo
 ```
@@ -269,7 +269,7 @@ O backend chama a DeepSeek (API OpenAI-compatible, `pip install openai`, `base_u
 
 No formato OpenAI-compatible, receber `usage` num response em streaming exige `stream_options: {"include_usage": True}` — sem isso, o último chunk não traz os tokens.
 
-**Imagens não suportadas.** Suporte a visão no formato OpenAI-compatible da DeepSeek não está confirmado — por isso o botão de anexar/colar imagem não existe no chat (`ChatInput.tsx`, prop `imagensHabilitadas={false}`) e `POST /chat` com `imagens` não-vazio retorna 400 mesmo que a requisição chegue de outra forma (defesa em profundidade, ver `chat.py`).
+**Imagens.** Suporte a anexo/paste de imagem no chat (`ChatInput.tsx` — botão de clipe, colar com `Ctrl+V`, arrastar-e-soltar, até 4 imagens/mensagem, PNG/JPEG/GIF/WEBP, 5 MB cada). `app/prompt.py:validar_imagens` valida formato/tipo/tamanho (400 se algo estiver fora do esperado) antes de montar o content multimodal (`[{"type":"text",...}, {"type":"image_url",{"url": data_url}}, ...]`, formato OpenAI-compatible) em `chat.py`. **A DeepSeek (provider padrão) não tem suporte a visão confirmado** — enviar imagem nesse modo provavelmente falha na própria API (erro tratado, sem derrubar a conexão). Testado com sucesso via `LLM_PROVIDER=openrouter` com um modelo de visão.
 
 **Preços** (USD/1M tokens, `app/config.py`): `PRECO_MISS` $0,14 · `PRECO_HIT` $0,0028 · `PRECO_OUTPUT` $0,28. `/admin/cache-stats` usa esses valores pra estimar `custo_real_usd` (com cache) vs. `custo_sem_cache_usd` (hipotético, tudo miss) e expõe a economia — com filtro por usuário no painel `/admin`.
 
@@ -287,7 +287,7 @@ RequireAuth            (401 → /login)
             └─ AdminPage (rota "/admin")
 ```
 
-`ChatPage` usa o hook `useChatStream` para consumir o SSE de `/chat` token a token e `lib/markdown.tsx` para renderizar a resposta (parser leve próprio, sem dependência externa — suporta negrito/itálico/código/listas/tabelas GFM e a extensão de imagem `![](data:...)`, usada hoje só para exibir imagens de mensagens antigas do histórico, já que anexar imagem nova não é mais suportado — ver seção "LLM: DeepSeek"). `AdminPage` carrega `ChatPage`/`AdminPage` via `React.lazy` — o bundle do painel admin só é baixado por quem realmente abre `/admin`.
+`ChatPage` usa o hook `useChatStream` para consumir o SSE de `/chat` token a token e `lib/markdown.tsx` para renderizar a resposta (parser leve próprio, sem dependência externa — suporta negrito/itálico/código/listas/tabelas GFM e a extensão de imagem `![](data:...)`, usada tanto para exibir imagens anexadas quanto as de mensagens antigas do histórico — ver seção "LLM: DeepSeek"). `AdminPage` carrega `ChatPage`/`AdminPage` via `React.lazy` — o bundle do painel admin só é baixado por quem realmente abre `/admin`.
 
 Build (`npm run build`) gera `frontend/dist`, servido pelo FastAPI: os arquivos JS/CSS ficam em `/assets` (via `StaticFiles`) e qualquer rota que não seja de API cai num fallback que devolve `index.html` — o roteamento de fato acontece no navegador (react-router).
 
@@ -477,4 +477,4 @@ Escrita/execução real no NX (NXOpen), log de auditoria de acesso administrativ
 
 **Tarifa de pico da DeepSeek não é fixa.** A DeepSeek anunciou que vai adotar tarifa dobrada (2x) em horário de pico (fuso de Pequim), sem data efetiva definida no momento em que este provider foi integrado. Horário comercial em Piracicaba cai no fora-de-pico de Pequim, então tende a favorecer — mas o preço não está travado; vale conferir a documentação oficial periodicamente e não assumir `PRECO_MISS`/`PRECO_HIT`/`PRECO_OUTPUT` (`app/config.py`) como permanentes.
 
-**Suporte a imagem não verificado.** O anexo/paste de imagem no chat foi removido por precaução (não confirmamos se `deepseek-v4-flash` aceita input de visão no formato OpenAI-compatible). Se a DeepSeek confirmar suporte no futuro, dá pra reativar: reintroduzir a conversão de imagem pra `{"type":"image_url",...}` em `app/llm.py`, remover o bloqueio em `chat.py` e a prop `imagensHabilitadas={false}` fixa em `ChatPage.tsx`.
+**Suporte a visão da DeepSeek ainda não confirmado.** O anexo/paste de imagem no chat está reativado (formato `image_url` OpenAI-compatible), mas só foi validado de ponta a ponta via `LLM_PROVIDER=openrouter` com um modelo de visão — não com a DeepSeek direto (provider padrão). Se enviar imagem sob a DeepSeek e não funcionar, a falha cai nos mesmos `LLMErro`/`LLMConexaoFalhou` já tratados (mensagem amigável no chat, sem derrubar a conexão), mas vale confirmar com um teste real antes de assumir suporte.

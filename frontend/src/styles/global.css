@@ -458,6 +458,39 @@ header .theme-toggle svg { width: 17px; height: 17px; }
   outline: 2px dashed var(--accent);
   outline-offset: -6px;
 }
+
+.anexos-preview {
+  display: flex;
+  gap: 8px;
+  padding: 10px 20px 0;
+  background: var(--bg);
+}
+.anexo-item {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.anexo-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.anexo-remover {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.anexo-remover:hover { background: var(--bad); }
+.anexo-remover svg { width: 11px; height: 11px; }
 #pergunta {
   flex: 1;
   resize: none;
