@@ -19,6 +19,7 @@ export default defineConfig({
       '/admin': BACKEND,
       '/knowledge': BACKEND,
       '/logo.png': BACKEND,
+      '/logo-light.png': BACKEND,
       '/health': BACKEND,
     },
   },
