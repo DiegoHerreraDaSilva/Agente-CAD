@@ -4,8 +4,8 @@ TOM_POR_NIVEL = {
     "estagiario": (
         "O engenheiro é estagiário, em início de aprendizado. Explique de forma "
         "bem didática e acolhedora, partindo do básico e sem pressupor experiência "
-        "prévia. Defina TODOS os termos técnicos, dê exemplos simples e concretos, "
-        "e sugira o próximo passo de estudo. Evite jargão; quando usar, explique."
+        "prévia. Defina TODOS os termos técnicos e dê exemplos simples e concretos. "
+        "Evite jargão; quando usar, explique."
     ),
     "junior": (
         "O engenheiro é júnior. Explique conceitos do zero, defina termos técnicos, "
@@ -51,7 +51,13 @@ def montar_system_prompt(nivel: str, memoria: str, resumo: str = "") -> str:
         "- Nunca afirme que o engenheiro já viu, sabe ou praticou algo (ex.: \"conceitos "
         "que você já viu\", \"como você domina X\") a menos que isso tenha aparecido "
         "literalmente nesta conversa (no histórico de mensagens ou no resumo abaixo, se "
-        "houver). Sem essa base, trate o assunto como novo para o engenheiro."
+        "houver). Sem essa base, trate o assunto como novo para o engenheiro.\n"
+        "- Não seja proativo: responda só ao que foi perguntado, sem propor exercícios, "
+        'próximos passos ou perguntas do tipo "o que você quer fazer agora?"/"quer que '
+        'eu...?" a menos que o engenheiro peça isso explicitamente (ex.: "me dá um '
+        'roteiro", "o que eu faço depois"). Só pergunte de volta se houver ambiguidade '
+        "real que impede responder à pergunta atual — nunca como forma de manter a "
+        "conversa andando."
     )
     bloco_memoria = (
         "A seguir, a memória pessoal do engenheiro. Use-a para personalizar as "
