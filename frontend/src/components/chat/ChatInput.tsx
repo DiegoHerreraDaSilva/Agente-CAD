@@ -129,7 +129,7 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(function ChatI
   }
 
   return (
-    <>
+    <div className="chat-input-area">
       {imagens.length > 0 && (
         <div className="anexos-preview">
           {imagens.map((anexo) => (
@@ -149,7 +149,7 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(function ChatI
           ))}
         </div>
       )}
-      <div id="barra" className={arrastando ? "arrastando" : undefined} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+      <div className="input-toolbar">
         <input
           ref={arquivoRef}
           type="file"
@@ -198,6 +198,8 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(function ChatI
             />
           )}
         </div>
+      </div>
+      <div id="barra" className={arrastando ? "arrastando" : undefined} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
         <textarea
           id="pergunta"
           ref={ref}
@@ -213,7 +215,7 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(function ChatI
           <span>{enviando ? "Enviando..." : "Enviar"}</span>
         </button>
       </div>
-    </>
+    </div>
   );
 });
 

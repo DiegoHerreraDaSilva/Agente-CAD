@@ -444,11 +444,19 @@ header .theme-toggle svg { width: 17px; height: 17px; }
 .resumo-box th, .resumo-box td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
 .resumo-box th { background: var(--surface-2); color: var(--text); font-weight: 600; }
 
+.chat-input-area { border-top: 1px solid var(--border); }
+
+.input-toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 10px 20px 0;
+  background: var(--bg);
+}
+
 #barra {
   display: flex;
   gap: 8px;
-  padding: 14px 20px;
-  border-top: 1px solid var(--border);
+  padding: 8px 20px 14px;
   background: var(--bg);
   align-items: flex-end;
   transition: background-color 0.15s ease-out;
