@@ -31,8 +31,6 @@ def garantir_schema() -> None:
                         id         SERIAL PRIMARY KEY,
                         email      TEXT UNIQUE NOT NULL,
                         senha_hash TEXT NOT NULL,
-                        nivel      TEXT NOT NULL
-                                   CHECK (nivel IN ('estagiario','junior','pleno','senior')),
                         memoria    TEXT NOT NULL DEFAULT '',
                         criado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
                     );
@@ -136,6 +134,10 @@ def garantir_schema() -> None:
                 cur.execute(
                     "ALTER TABLE cache_usage_log DROP COLUMN IF EXISTS provider;"
                 )
+                # Feature de "nível" (tom por nível de experiência) removida —
+                # a coluna e o CHECK constraint associado não fazem mais
+                # sentido. Idempotente.
+                cur.execute("ALTER TABLE users DROP COLUMN IF EXISTS nivel;")
                 # Favoritar/pinar sessões — idempotente.
                 cur.execute(
                     "ALTER TABLE chat_sessions "

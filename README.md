@@ -12,13 +12,11 @@ Prova de conceito de um agente **consultivo** de engenharia CAD/Siemens NX, com:
 - **Produtividade no chat**: busca global por conteúdo (`Ctrl+K`), templates de prompt pessoais salvos por usuário, favoritar/fixar sessões, exportar a conversa em Markdown, timestamp em cada mensagem, sugestões de follow-up após cada resposta, regenerar a última resposta, editar e reenviar uma pergunta anterior (trunca o que vem depois), anexar um arquivo de texto (botão ou arrastar-e-soltar), atalhos de teclado com um modal de ajuda (`?`), auto-scroll que não interrompe o usuário se ele rolar pra cima durante o streaming, e aviso de "ainda processando" se a resposta demorar.
 - **Interface moderna** (React + Tailwind CSS v4 + Framer Motion + lucide-react + `next-themes`): tema claro/escuro com toggle no header, cards em gradiente com contorno de destaque, cantos de 14px, animações de entrada/hover/clique, estados vazios/loading tratados, e botão de copiar em cada resposta do agente.
 
-O agente é **estritamente consultivo** — não executa nada no NX. LLM: **DeepSeek** (`deepseek-v4-flash`), com thinking mode desligado explicitamente (ou **OpenRouter** em modo de teste, ver seção "LLM: DeepSeek"). Anexo/paste de imagem no chat é suportado (formato `image_url` OpenAI-compatible) — depende do modelo ter suporte a visão; a DeepSeek (provider padrão) **não** suporta.
+O agente é **estritamente consultivo** — não executa nada no NX. LLM: **DeepSeek** (`deepseek-v4-flash`), com thinking mode desligado explicitamente. Sem suporte a anexo/paste de imagem no chat (a DeepSeek não suporta visão).
 
 ## Stack
 
 Backend em Python (FastAPI + Uvicorn), streaming via SSE, SDK `openai` (a API da DeepSeek é OpenAI-compatible — `base_url="https://api.deepseek.com"`). Embeddings do RAG via **Voyage AI** (`voyageai`). Banco **PostgreSQL 16 com a extensão `pgvector`** (imagem `pgvector/pgvector:pg16`) rodando em Docker — só o banco; o backend roda em venv local. Frontend em **React + TypeScript (Vite)**, com `react-router-dom` para navegação client-side, **Tailwind CSS v4** (`@tailwindcss/vite`, CSS-first — sem `tailwind.config.js`) e **`next-themes`** para o tema claro/escuro. Em produção, o build estático (`frontend/dist`) é servido pelo próprio FastAPI — um único processo. O backend usa o pacote `truststore` para confiar no certificado da rede corporativa ao chamar APIs externas (DeepSeek, Voyage — rede com inspeção TLS) — como `truststore.inject_into_ssl()` patcheia o SSL do processo inteiro, todos os clients herdam essa confiança automaticamente, sem config por client.
-
-> O frontend já foi HTML/CSS/JS puro (sem Node), porque a rede corporativa bloqueava `npm install`. Esse bloqueio foi resolvido depois (certificado corporativo liberado para o npm) e o frontend foi migrado para React visando performance (bundles minificados, code-splitting do painel admin via `React.lazy`) e organização de pastas (componentes/hooks/lib em vez de um `<script>` inline por página). Mais tarde, o CSS puro (paleta fixa, só tema escuro) foi migrado para o design system Schwaben com Tailwind + tokens de tema (ver seção "Interface e design system" abaixo) — os nomes de classe dos componentes (`.btn-primario`, `.card`, `.modal` etc.) foram mantidos; só o CSS por trás deles mudou, para não precisar reescrever o JSX de cada componente.
 
 ## Pré-requisitos
 
@@ -150,12 +148,11 @@ users                    chat_sessions              chat_messages
 ├─ id (PK)                ├─ id (PK)                  ├─ id (PK)
 ├─ email (unique)         ├─ user_id (FK→users)       ├─ session_id (FK→chat_sessions)
 ├─ senha_hash (bcrypt)    ├─ titulo                    ├─ papel ('user'|'assistant')
-├─ nivel (enum)           ├─ resumo (texto, /compact)  ├─ conteudo
-├─ role ('engineer'|      ├─ rag_injetadas (jsonb)     └─ criado_em
-│         'admin')        ├─ pinned (favoritar)
-├─ memoria (texto livre)  ├─ criado_em
-├─ must_change_senha      └─ atualizado_em
-└─ criado_em
+├─ role ('engineer'|      ├─ resumo (texto, /compact)  ├─ conteudo
+│         'admin')        ├─ rag_injetadas (jsonb)     └─ criado_em
+├─ memoria (texto livre)  ├─ pinned (favoritar)
+├─ must_change_senha      ├─ criado_em
+└─ criado_em              └─ atualizado_em
 
 knowledge_entries          cache_usage_log             prompt_snippets
 ├─ id (PK)                 ├─ id (PK)                   ├─ id (PK)
@@ -193,23 +190,7 @@ usuario_atual(request)          → lê o cookie de sessão, 401 se inválido
 
 Cadastro público está **desabilitado** (`POST /auth/register` sempre 403). Contas só nascem via bootstrap (`ADMIN_EMAILS` no `.env`) ou pelo painel `/admin`, e sempre com `must_change_senha=True` — forçando a troca de senha antes de liberar qualquer outra rota. Excluir um usuário (`DELETE /admin/users/{id}`) apaga a conta e, via `ON DELETE CASCADE`, suas sessões/mensagens/log de cache; um admin não pode excluir a própria conta (mesma trava usada para impedir o auto-rebaixamento de papel).
 
-Não há `CORSMiddleware` no backend — front e back sempre são a mesma origem do ponto de vista do navegador (proxy do Vite em dev, mesmo processo FastAPI em produção), então nunca houve necessidade de CORS; adicionar `allow_origins=["*"]` só abriria a API (autenticada por cookie de sessão) para leitura por qualquer site.
-
-`POST /auth/login`, `POST /chat` e `POST /sessions/{id}/compact` têm rate limiting via `slowapi` (`Limiter` em `app/config.py`, registrado em `main.py`) — 5/min, 20/min e 10/min respectivamente. Limite excedido devolve `429`. Armazenamento em memória (adequado para um único processo `uvicorn`; se o app ganhar múltiplas réplicas, precisa migrar para um backend compartilhado, ex. Redis).
-
-A **chave** do limite muda por rota, não só o valor: `/auth/login` é por IP (`get_remote_address` — nesse ponto ainda não há usuário autenticado, então não existe outra opção de chave sem introduzir sinal extra). Já `/chat` e `/compact` são **por usuário logado** (`get_user_or_ip` em `app/config.py`, lê `request.session["user_id"]` — o `SessionMiddleware` roda como middleware ASGI, então a sessão já está disponível antes mesmo do `Depends(...)` da rota resolver). Isso corrige um problema real de rede corporativa com NAT: se fosse por IP, todo mundo atrás do mesmo IP externo da empresa compartilharia o mesmo teto — um punhado de engenheiros conversando ao mesmo tempo esgotaria o limite pra todo mundo. Por usuário, cada engenheiro tem seu próprio teto de 20 mensagens/min e 10 compactações/min, independente de quantas outras pessoas estão atrás do mesmo IP.
-
-### Headers de segurança HTTP
-
-Um middleware em `main.py` (`security_headers`) anexa três headers em toda resposta do backend:
-
-- `X-Content-Type-Options: nosniff` — impede o navegador de tentar reinterpretar o tipo de um arquivo diferente do `Content-Type` declarado.
-- `X-Frame-Options: DENY` — impede que o app seja carregado dentro de um `<iframe>` em outro site (proteção contra clickjacking).
-- `Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'` — bloqueia por padrão qualquer script/estilo/imagem/conexão de origem diferente da própria. `img-src data:` é necessário pelos anexos de imagem colados/anexados no chat (Markdown com `data:` URI); `style-src 'unsafe-inline'` é uma concessão pragmática porque vários componentes React usam `style={{...}}` inline (ex.: `KnowledgeTab`, `UsersTab`) — CSP puro bloquearia isso. Isso funciona como segunda camada de defesa contra XSS: o chat e o resumo de sessão renderizam Markdown → HTML via `dangerouslySetInnerHTML` (`MessageBubble.tsx`, `ResumoBox.tsx`); mesmo que um bug no parser ou uma resposta manipulada do agente injetasse um `<script src="...">`, o CSP bloqueia o carregamento.
-
-Esse header só se aplica quando o **FastAPI** serve a resposta — ou seja, produção (`npm run build` + backend) e as chamadas de API mesmo em dev. Rodando `npm run dev`, o HTML vem direto do Vite em `:5173`, sem passar pelo backend; por isso `frontend/index.html` já tem a mesma política numa tag `<meta http-equiv="Content-Security-Policy">`, que cobre esse caso e é servida também dentro do build de produção (as duas coexistem, sem conflito).
-
-Fora de escopo por enquanto: `Strict-Transport-Security` (HSTS) — só faz sentido quando o app rodar atrás de TLS de verdade (hoje é HTTP local, `https_only=False` no `SessionMiddleware`); ver roadmap.
+Ver seção "Postura de segurança" para CORS, headers HTTP e rate limiting.
 
 ### RAG (recuperação semântica da base de conhecimento)
 
@@ -221,42 +202,30 @@ A cada `/chat`, `recuperar_conhecimento(pergunta, rag_injetadas, turno_atual)` e
 
 **`resumo_rag` (versão condensada para injeção).** Recuperação e injeção têm objetivos opostos de tamanho: o embedding sempre usa `conteudo` completo (mais texto ajuda a busca), mas o texto **injetado** no turno atual usa `COALESCE(resumo_rag, conteudo)` — a coluna `resumo_rag` é gerada automaticamente (mesmo hook do embedding) só para entradas com mais de `RESUMO_RAG_MIN_CHARS` (default 3200, ~800 tokens); entradas curtas já são o caso ótimo e ficam com `resumo_rag = NULL`, caindo de volta no conteúdo completo. Falha ao gerar o resumo não quebra a aprovação/criação (mesmo padrão de degradação graciosa do embedding). Backfill/reprocessamento: `scripts/backfill_resumo_rag.py`.
 
-### Concisão no tom (economia de tokens de saída)
+### Tom e regras de forma do agente
 
-O bloco de tom (`TOM_POR_NIVEL` em `app/prompt.py`) inclui regras de forma comuns aos quatro níveis: não recapitular a pergunta, não anunciar o que vai fazer, não terminar com um resumo do que já foi dito, e referenciar informação já dada na conversa em vez de repeti-la. Essas regras cortam só a **forma** — a explicação didática do "porquê" (definir termos, passo a passo) continua intacta para estagiário/júnior, que é o objetivo original desses níveis (reduzir a carga dos engenheiros sênior como professores).
-
-Há também uma regra contra um tipo específico de alucinação, detectado ao vivo: numa sessão nova (sem histórico nem resumo), o modelo afirmou algo como "conceitos que você já viu" sobre um assunto nunca mencionado na conversa. O prompt agora proíbe explicitamente afirmar que o engenheiro já viu/sabe/praticou algo a menos que isso tenha aparecido literalmente no histórico de mensagens ou no resumo injetado.
+O bloco de tom (`montar_system_prompt` em `app/prompt.py`) é único para todos os usuários — direto e prático, mas justificando recomendações não óbvias. Junto dele, um conjunto fixo de regras de forma: não recapitular a pergunta, não anunciar o que vai fazer, não terminar com um resumo do que já foi dito, referenciar informação já dada na conversa em vez de repeti-la, nunca afirmar que o engenheiro já viu/sabe/praticou algo a menos que isso tenha aparecido literalmente no histórico de mensagens ou no resumo injetado, e não ser proativo (sem propor exercícios ou próximos passos que não foram pedidos). Essas regras cortam só a **forma** da resposta — a explicação técnica em si não é afetada.
 
 ### Fluxo de uma mensagem de chat
 
 ```
-POST /chat {session_id, pergunta, imagens}
-  → valida sessão e login; valida imagens (formato/tipo/tamanho, ver validar_imagens)
-  → grava a pergunta (+ marcações Markdown das imagens, se houver) em chat_messages
-  → monta o histórico completo (multi-turn) da sessão
+POST /chat {session_id, pergunta}
+  → valida sessão e login
+  → grava a pergunta em chat_messages
+  → monta o histórico completo (multi-turn) da sessão, saneado de imagens antigas (ver sanitizar_historico_para_llm)
   → RAG: embedda a pergunta (Voyage) e recupera top-N entradas por similaridade (pgvector),
     deduplicando contra o que já foi injetado nesta sessão
-  → system prompt: [tom por nível] + [memória pessoal] + [resumo]  (string única)
-  → turno atual: [conhecimento recuperado (se houver)] + [pergunta] (+ [imagens], se houver — content vira lista de partes text/image_url)
+  → system prompt: [tom fixo] + [memória pessoal] + [resumo]  (string única)
+  → turno atual: [conhecimento recuperado (se houver)] + [pergunta]
   → app.llm.resposta_stream(...) — streaming SSE token a token, thinking mode desligado
   → ao final: captura uso de tokens (incl. cache automático) e grava a resposta + o log de custo
 ```
 
 Erros de sobrecarga/limite da API (mesmo no meio do streaming) são traduzidos por `app/llm.py` em 4 exceptions genéricas (`LLMSobrecarregado`, `LLMLimiteRequisicoes`, `LLMConexaoFalhou`, `LLMErro`) e viram uma mensagem amigável no chat, sem derrubar a conexão. `/compact` usa `max_tokens=4096` na chamada não-streaming que gera o resumo — ambos os limites foram calibrados para não cortar respostas longas no meio.
 
-### LLM: DeepSeek (padrão) / OpenRouter (teste)
+### LLM: DeepSeek
 
-O backend chama a DeepSeek (API OpenAI-compatible, `pip install openai`, `base_url="https://api.deepseek.com"`) através de uma seam única, **`app/llm.py`** — nenhum outro módulo importa o SDK `openai` ou toca em `llm_client`/`LLM_MODEL` (`app/config.py`) diretamente. Os 3 pontos que precisam de LLM (`/chat` streaming, `/compact` resumo de sessão, `gerar_resumo_rag` em `knowledge.py`) chamam só `resposta_stream()`/`resposta_simples()`.
-
-**Testar com o OpenRouter.** `LLM_PROVIDER=openrouter` no `.env` (junto de `OPENROUTER_API_KEY` e opcionalmente `OPENROUTER_MODEL`, ver `.env.example`) troca o LLM do app inteiro pro OpenRouter — mesmo formato OpenAI-compatible, só muda `base_url`/`api_key`/`model` em `app/config.py`. É só pra teste/comparação; o padrão sem essa variável continua sendo a DeepSeek direto. Duas diferenças tratadas automaticamente por provider:
-
-- **`thinking` (extra_body) só é enviado pra DeepSeek** — é uma extensão proprietária dela; mandar isso pra outro modelo via OpenRouter não faria sentido (o modelo de teste padrão, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, é inclusive um modelo de reasoning por si só).
-- **Usage sem detalhe de cache**: `_normalizar_usage()` em `llm.py` usa `getattr` com fallback pros campos padrão da OpenAI (`prompt_tokens`/`completion_tokens`) quando os campos específicos da DeepSeek (`prompt_cache_miss_tokens`/`prompt_cache_hit_tokens`) não vêm na resposta — evita `AttributeError` com qualquer provider.
-- **Preço zerado no modo OpenRouter** (`PRECO_MISS`/`PRECO_HIT`/`PRECO_OUTPUT` = 0 em `config.py`): não há tabela de preço por modelo do OpenRouter integrada ainda, então `/admin/cache-stats` mostraria custo incorreto — zerado de propósito enquanto for só teste (o modelo padrão sugerido, aliás, é `:free`).
-
-**Thinking mode.** A DeepSeek roda em modo "thinking" (reasoning) por padrão — se ficar ligado sem perceber, cada resposta gasta muito mais tokens de saída (e dinheiro) do que parece. O request explicita `extra_body={"thinking": {"type": "disabled"}}` pra desligar de vez (`thinking` é extensão específica da DeepSeek, fora do schema padrão OpenAI — o SDK só aceita esse tipo de parâmetro via `extra_body`). Teste empírico de sanidade: pergunta de uma linha → `completion_tokens` deve ficar em dezenas, não centenas (se vier alto, o thinking ainda está ligado). Validado com a API real: 8 tokens de output numa resposta de uma linha.
-
-**Cache automático.** Diferente de APIs que exigem marcação explícita de breakpoint, a DeepSeek cacheia sozinha o prefixo repetido entre chamadas (sem nenhum parâmetro no request) — o `system` (tom + memória + resumo) e o histórico da conversa tendem a se repetir turno a turno, então o prefixo comum é lido do cache automaticamente. Validado com a API real: um 2º turno com o mesmo prefixo do 1º leu 768 tokens do cache (`prompt_cache_hit_tokens`), com `input_tokens` (miss) caindo de 857 para 89.
+O backend chama a DeepSeek (API OpenAI-compatible, `pip install openai`, `base_url="https://api.deepseek.com"`) através de uma seam única, **`app/llm.py`** — nenhum outro módulo importa o SDK `openai` ou toca em `llm_client`/`LLM_MODEL` (`app/config.py`) diretamente. Os 3 pontos que precisam de LLM (`/chat` streaming, `/compact` resumo de sessão, `gerar_resumo_rag` em `knowledge.py`) chamam só `resposta_stream()`/`resposta_simples()`. Sem suporte a imagem no chat — a DeepSeek não tem visão.
 
 **Usage normalizado.** `UsoNormalizado` (dataclass em `llm.py`) é o shape que `registrar_uso_cache` grava em `cache_usage_log`:
 
@@ -269,7 +238,11 @@ O backend chama a DeepSeek (API OpenAI-compatible, `pip install openai`, `base_u
 
 No formato OpenAI-compatible, receber `usage` num response em streaming exige `stream_options: {"include_usage": True}` — sem isso, o último chunk não traz os tokens.
 
-**Imagens.** Suporte a anexo/paste de imagem no chat (`ChatInput.tsx` — botão de clipe, colar com `Ctrl+V`, arrastar-e-soltar, até 4 imagens/mensagem, PNG/JPEG/GIF/WEBP, 5 MB cada). `app/prompt.py:validar_imagens` valida formato/tipo/tamanho (400 se algo estiver fora do esperado) antes de montar o content multimodal (`[{"type":"text",...}, {"type":"image_url",{"url": data_url}}, ...]`, formato OpenAI-compatible) em `chat.py`. **A DeepSeek (provider padrão) não tem suporte a visão confirmado** — enviar imagem nesse modo provavelmente falha na própria API (erro tratado, sem derrubar a conexão). Testado com sucesso via `LLM_PROVIDER=openrouter` com um modelo de visão.
+**Thinking mode.** A DeepSeek roda em modo "thinking" (reasoning) por padrão — se ficar ligado, cada resposta gasta muito mais tokens de saída (e dinheiro) do que parece. O request explicita `extra_body={"thinking": {"type": "disabled"}}` pra desligar de vez (`thinking` é extensão específica da DeepSeek, fora do schema padrão OpenAI — o SDK só aceita esse tipo de parâmetro via `extra_body`). Sinal de sanidade: numa pergunta de uma linha, `completion_tokens` deve ficar em dezenas, não centenas — se vier alto, o thinking está ligado.
+
+**Cache automático.** Diferente de APIs que exigem marcação explícita de breakpoint, a DeepSeek cacheia sozinha o prefixo repetido entre chamadas (sem nenhum parâmetro no request) — o `system` (tom + memória + resumo) e o histórico da conversa tendem a se repetir turno a turno, então o prefixo comum é lido do cache automaticamente.
+
+**Histórico com imagem legada.** O chat não aceita anexo/paste de imagem hoje (a DeepSeek não tem visão). Mensagens de sessões antigas podem conter uma marcação Markdown com a data URL inteira de uma imagem (`![imagem colada](data:...)`, potencialmente megabytes). `app/prompt.py:sanitizar_historico_para_llm` substitui esse conteúdo por um placeholder curto antes de montar o histórico pro LLM (`chat.py`), pra não estourar a janela de contexto da DeepSeek nem gastar tokens à toa.
 
 **Preços** (USD/1M tokens, `app/config.py`): `PRECO_MISS` $0,14 · `PRECO_HIT` $0,0028 · `PRECO_OUTPUT` $0,28. `/admin/cache-stats` usa esses valores pra estimar `custo_real_usd` (com cache) vs. `custo_sem_cache_usd` (hipotético, tudo miss) e expõe a economia — com filtro por usuário no painel `/admin`.
 
@@ -287,7 +260,7 @@ RequireAuth            (401 → /login)
             └─ AdminPage (rota "/admin")
 ```
 
-`ChatPage` usa o hook `useChatStream` para consumir o SSE de `/chat` token a token e `lib/markdown.tsx` para renderizar a resposta (parser leve próprio, sem dependência externa — suporta negrito/itálico/código/listas/tabelas GFM e a extensão de imagem `![](data:...)`, usada tanto para exibir imagens anexadas quanto as de mensagens antigas do histórico — ver seção "LLM: DeepSeek"). `AdminPage` carrega `ChatPage`/`AdminPage` via `React.lazy` — o bundle do painel admin só é baixado por quem realmente abre `/admin`.
+`ChatPage` usa o hook `useChatStream` para consumir o SSE de `/chat` token a token e `lib/markdown.tsx` para renderizar a resposta (parser leve próprio, sem dependência externa — suporta negrito/itálico/código/listas/tabelas GFM e a extensão de imagem `![](data:...)`, usada só para exibir imagens de mensagens antigas do histórico — ver seção "LLM: DeepSeek"). `AdminPage` carrega `ChatPage`/`AdminPage` via `React.lazy` — o bundle do painel admin só é baixado por quem realmente abre `/admin`.
 
 Build (`npm run build`) gera `frontend/dist`, servido pelo FastAPI: os arquivos JS/CSS ficam em `/assets` (via `StaticFiles`) e qualquer rota que não seja de API cai num fallback que devolve `index.html` — o roteamento de fato acontece no navegador (react-router).
 
@@ -297,7 +270,7 @@ O CSS (`frontend/src/styles/global.css`) segue o design system Schwaben: **Tailw
 
 - **Tema**: `next-themes` (`ThemeProvider attribute="class" defaultTheme="dark"` em `main.tsx`) alterna a classe `dark` no `<html>`. O botão de troca (`components/layout/ThemeToggle.tsx`, ícone Sun/Moon) fica embutido no `Header` — visível no chat e no admin.
 - **`cn()`** (`lib/utils.ts`, `clsx` + `tailwind-merge`) — helper padrão para montar className condicional em componentes novos.
-- Os componentes existentes **mantiveram os mesmos nomes de classe** de antes da migração (`.btn-primario`, `.sessao-item`, `.modal`, `.badge`, `.stat-card` etc.) — só o CSS por trás de cada um foi reescrito para os tokens novos (`var(--accent)`, `var(--surface)`, `var(--text-muted)` etc. em vez de `var(--brand-600)`/`var(--slate-900)` fixos). Isso evitou reescrever o JSX de cada tela só para trocar de sistema visual; um componente novo, porém, deve usar classes utilitárias Tailwind diretamente (não os nomes de classe antigos).
+- Componentes existentes usam classes semânticas próprias (`.btn-primario`, `.sessao-item`, `.modal`, `.badge`, `.stat-card` etc.), estilizadas com os tokens de tema (`var(--accent)`, `var(--surface)`, `var(--text-muted)` etc.) em `global.css`. Um componente novo deve usar classes utilitárias Tailwind diretamente, em vez de criar mais classes semânticas.
 - `select option { color: #000; background: #fff; }` é proposital: o menu nativo do `<select>` não herda os tokens de tema, e forçar só a cor do texto (sem fundo) deixava a lista ilegível quando o navegador desenha o popup com fundo escuro por padrão (SO em dark mode).
 
 ### Produtividade no chat
@@ -309,7 +282,7 @@ O CSS (`frontend/src/styles/global.css`) segue o design system Schwaben: **Tailw
 - **Exportar conversa** (`lib/exportSession.ts`): baixa a sessão atual como um arquivo `.md`, com autor e timestamp de cada mensagem.
 - **Sugestões de follow-up** (`FollowUpChips.tsx`): depois de cada resposta do agente, três chips fixos ("Pode detalhar mais esse ponto?", "Tem um exemplo prático disso?", "Resume isso em tópicos.") que reenviam o texto ao serem clicados.
 - **Regenerar / editar mensagem**: o botão de regenerar (só na última resposta) chama `POST /sessions/{id}/regenerate`, que apaga a última pergunta+resposta no backend e devolve a pergunta para o front reenviar via `/chat` (fluxo normal de envio, sem duplicar lógica). Editar uma mensagem do usuário chama `DELETE /sessions/{id}/messages/{message_id}/rest` (apaga a mensagem e tudo depois dela) e reenvia o texto editado do mesmo jeito.
-- **Anexar arquivo de texto**: botão de clipe (`ChatInput.tsx`) ou arrastar-e-soltar direto na barra de input — lê `.txt/.log/.md/.csv/.json/.xml` via `FileReader` e injeta o conteúdo num bloco de código no campo de pergunta (puramente client-side; não sobe pro backend como arquivo, vira só texto na mensagem).
+- **Anexar arquivo de texto**: botão de anexo (`ChatInput.tsx`) ou arrastar-e-soltar direto na barra de input — lê `.txt/.log/.md/.csv/.json/.xml` via `FileReader` e injeta o conteúdo num bloco de código no campo de pergunta (puramente client-side; não sobe pro backend como arquivo, vira só texto na mensagem).
 - **Auto-scroll inteligente**: o chat só acompanha o fim da conversa enquanto o usuário estiver lá (`ChatPage.tsx`, `seguindoRef` com margem de 80px); rolar pra cima durante o streaming não é interrompido pelos chunks seguintes, e um botão flutuante ("↓ Novas mensagens") volta ao fim e reativa o auto-scroll.
 - **Aviso de "ainda processando"**: se a resposta do agente demorar mais de 6s pra começar a chegar, um texto aparece abaixo dos pontinhos de "digitando" (`MessageBubble.tsx`), pra diferenciar "vai responder já" de "travou".
 - **Sincronização sem "recarregar" a tela**: depois que o streaming termina, o front busca os ids/timestamps reais do backend e só os "cola" nas mensagens já renderizadas por posição — nunca substitui o array por objetos com uma nova `key` do React, senão a lista inteira desmontaria/remontaria e a animação de entrada replayaria em tudo, dando a falsa impressão de que o chat recarregou.
@@ -325,7 +298,7 @@ As agregações de "mensagens" e "tokens" em `ranking`/`sessoes_ativas` usam sub
 0. `cd frontend && npm run build` antes de subir o backend — sem `frontend/dist`, qualquer rota que não seja de API devolve 404 (`main.py` avisa isso explicitamente).
 1. Login sem sessão redireciona para `/login`; cadastro está desabilitado.
 2. Primeiro acesso de uma conta nova força a troca de senha em `/change-password`.
-3. Streaming de chat funciona; nível e memória pessoal influenciam o tom das respostas.
+3. Streaming de chat funciona; memória pessoal influencia o tom das respostas.
 4. Sessões: criar, renomear, excluir, e o histórico persiste ao recarregar.
 5. `/compact` resume e limpa mensagens antigas; a sessão volta a responder a partir do resumo.
 6. Painel `/admin`: aba de usuários (criar, editar, resetar senha, excluir — exceto a própria conta), aba de base de conhecimento (aprovar/rejeitar pendências de `/compact`) e aba de economia de cache (com filtro por usuário).
@@ -335,146 +308,87 @@ As agregações de "mensagens" e "tokens" em `ranking`/`sessoes_ativas` usam sub
 10. Botão de copiar em mensagens do agente copia o texto para a área de transferência.
 11. `curl -i http://localhost:8001/` (rodando o build de produção, não `npm run dev`) mostra `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` e `Content-Security-Policy` na resposta; console do navegador sem erros de CSP ao usar o app normalmente (chat, painel admin).
 12. Rate limiting: 6 tentativas seguidas de `POST /auth/login` com senha errada → a 6ª retorna `429`; 21 chamadas seguidas a `POST /chat` → a 21ª retorna `429`; 11 chamadas seguidas a `POST /sessions/{id}/compact` → a 11ª retorna `429`.
-13. Respostas do chat começam direto no conteúdo (sem recapitular a pergunta) e não terminam com um resumo do que foi dito; estagiário/júnior continuam recebendo explicação didática do "porquê".
+13. Respostas do chat começam direto no conteúdo (sem recapitular a pergunta) e não terminam com um resumo do que foi dito.
 14. Numa mesma sessão, injetar uma entrada no turno 1 e perguntar de novo sobre o mesmo tema no turno 2 **não** reinjeta (a entrada não aparece nas `entradas` retornadas). No turno 15 (>`RAG_JANELA_REINJECAO`=10 turnos depois), a mesma pergunta reinjeta e grava `{"<id>": 15}` em `chat_sessions.rag_injetadas` (o valor antigo é sobrescrito, não mantido) — a partir daí, ela só volta a ser candidata a partir do turno 25. Rodar `/compact` zera `rag_injetadas` para `{}`.
 15. Aprovar/criar uma entrada de conhecimento longa (>`RESUMO_RAG_MIN_CHARS`) gera `resumo_rag`; uma entrada curta fica com `resumo_rag = NULL` e a injeção usa o conteúdo completo (fallback via `COALESCE`).
 16. Subir o app sem `DEEPSEEK_API_KEY` falha rápido no startup com mensagem clara (`app/config.py`), em vez de erro obscuro na primeira mensagem de chat.
-17. Pergunta de uma linha no chat → `completion_tokens` (mapeado em `cache_usage_log.output_tokens`) fica em dezenas, não centenas (thinking mode desligado); 2º turno da mesma sessão com prefixo repetido registra `cache_read_input_tokens > 0`; o botão de anexar imagem não aparece e `POST /chat` com `imagens` retorna 400.
+17. Pergunta de uma linha no chat → `completion_tokens` (mapeado em `cache_usage_log.output_tokens`) fica em dezenas, não centenas (thinking mode desligado); 2º turno da mesma sessão com prefixo repetido registra `cache_read_input_tokens > 0`; não há botão de anexar imagem no chat.
 18. `/admin/cache-stats` calcula `custo_real_usd`/`economia_usd` com os preços da DeepSeek (`PRECO_MISS`/`PRECO_HIT`/`PRECO_OUTPUT`) e reflete a economia real do cache automático.
 19. `Ctrl+K` abre a busca e encontra sessões/mensagens por conteúdo; `n` (fora de um campo de texto) cria sessão nova; `/` foca o input; `?` abre o modal de ajuda.
 20. Fixar uma sessão (estrela na sidebar) a move para a seção "Fixadas"; excluí-la mostra um aviso de confirmação diferente do de uma sessão comum.
 21. Editar uma mensagem antiga do usuário e reenviar trunca as mensagens seguintes (backend e tela) e gera uma nova resposta; regenerar a última resposta refaz só ela, sem duplicar a pergunta.
-22. Soltar um arquivo `.txt` na barra de input (ou usar o botão de clipe) injeta o conteúdo no campo de pergunta.
+22. Soltar um arquivo `.txt` na barra de input (ou usar o botão de anexo) injeta o conteúdo no campo de pergunta.
 23. Rolar para cima durante o streaming de uma resposta não puxa o scroll de volta ao fim; o botão "↓ Novas mensagens" aparece e, ao clicar, volta pro fim.
 24. `GET /admin/dashboard?dias=30` retorna números consistentes entre `ranking` (por usuário) e `sessoes_ativas` (por sessão) — a soma das sessões de um usuário no ranking bate com o total dele, sem inflar por causa de JOIN cruzado com `cache_usage_log`.
 
-## Testes de segurança realizados
+## Postura de segurança
 
-Bateria de testes manuais executada pelo DevTools do navegador (Chrome) contra a POC rodando localmente, cobrindo a superfície client-side do app. Todos os testes abaixo passaram. 
+### Cookie de sessão
 
-### 1. Cookie de sessão (roubo de sessão)
+O cookie de sessão tem os flags `HttpOnly` e `SameSite` definidos — não é legível via `document.cookie`/JavaScript, então mesmo um XSS na página não conseguiria exfiltrá-lo.
 
-O que testa: se o cookie de sessão pode ser lido por JavaScript malicioso.
+### Cadeia de autorização por rota
 
-Como foi feito: `Application → Cookies → localhost:8001`; conferido o flag `HttpOnly` e o `SameSite` do cookie. Também rodado `document.cookie` no console.
+Toda rota protegida passa pela cadeia de dependências do FastAPI `usuario_atual → requer_senha_atualizada → admin_atual` (`app/deps.py`): sem sessão → `401`; logado mas com `must_change_senha=True` → `403` em qualquer rota fora de `/change-password`; logado como `engineer` tentando acessar rota de `admin_atual` → `403`.
 
-Resultado esperado (obtido): `HttpOnly` marcado e `SameSite` definido; `document.cookie` não retorna o cookie de sessão. Isso garante que, mesmo se houver um XSS na página, o cookie não pode ser exfiltrado via JS.
-
-### 2. Cadeia de autorização por rota (401 / 403)
-
-O que testa: se as rotas protegidas respeitam a cadeia `usuario_atual → requer_senha_atualizada → admin_atual`.
-
-Como foi feito: no console, `fetch('/admin/users').then(r => console.log(r.status))` em três estados de sessão distintos.
-
-Resultado esperado (obtido):
-
-- Sem sessão → `401`.
-- Logado como `engineer` (não admin) → `403` (barrado em `admin_atual`).
-- Logado com `must_change_senha = true` → `403` em qualquer rota fora de `/change-password` (barrado em `requer_senha_atualizada`).
-
-### 3. Isolamento entre usuários — IDOR (o teste crítico)
-
-O que testa: se o backend confia no `session_id` da requisição sem verificar se ele pertence ao usuário logado (Insecure Direct Object Reference).
-
-Como foi feito: logado como usuário A, capturado o `session_id` de uma conversa dele (via `/sessions` ou URL); logado como usuário B e tentado acessar essa sessão:
-
-```js
-fetch('/chat', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ session_id: 'ID_DA_SESSAO_DO_A', pergunta: 'teste' })
-})
-```
-
-Resultado esperado (obtido): o backend não devolve dados da sessão do usuário A — a checagem `WHERE user_id = usuario_atual.id` está presente. Uma falha aqui seria grave (vazamento de conversa entre usuários), por isso é o ponto mais importante da bateria.
-
-### 4. XSS armazenado em campos livres
-
-O que testa: se conteúdo controlado pelo usuário é renderizado como HTML executável (o parser de Markdown é próprio, em `lib/markdown.tsx`, sem lib de sanitização externa).
-
-Como foi feito: inserido o payload `<img src=x onerror=alert(1)>` (e variações com `<script>`) em três campos livres distintos — título de sessão, memória pessoal (Perfil) e conteúdo de entrada da base de conhecimento (via `/admin`) — e recarregada a tela que exibe cada um.
-
-Resultado esperado (obtido): o payload aparece como texto literal (escapado), sem disparar `alert` nem virar um elemento real no DOM. Confirmado inspecionando o HTML resultante no painel Elements. Testados os três campos separadamente, pois cada um passa por caminho de renderização diferente.
-
-### 5. Exposição da chave de API
-
-O que testa: se a `DEEPSEEK_API_KEY` vaza para o cliente (só o backend pode chamar a API da DeepSeek).
-
-Como foi feito: aba `Network` filtrada por `Fetch/XHR`, uso normal do chat, inspeção dos payloads de request/response; e busca global (Ctrl+Shift+F) pelo prefixo da chave na aba `Sources` (todo o JS servido ao navegador).
-
-Resultado esperado (obtido): nenhuma ocorrência da chave em requests, respostas ou no bundle do frontend. A chave permanece apenas no backend.
-
-### 6. Vazamento de stack trace em erros
-
-O que testa: se um erro de servidor devolve detalhes internos (caminho de arquivo Python, traceback) para o cliente.
-
-Como foi feito: provocado erro proposital com payload inválido para `/chat` (`pergunta` vazia / `session_id` inexistente) e inspecionada a resposta na aba `Network`.
-
-Resultado esperado (obtido): a resposta não expõe stack trace nem caminhos internos — apenas erro tratado.
-
-### 7. Cabeçalhos de resposta HTTP
-
-O que testa: presença dos headers de segurança e ausência de CORS indevido.
-
-Como foi feito: `Network → (request principal) → Headers → Response Headers`, e `curl -i http://localhost:8001/` no build de produção.
-
-Resultado / ações tomadas:
-
-- Detectado `Access-Control-Allow-Origin: *` (CORS aberto) — removido, já que front e back são sempre a mesma origem (proxy do Vite em dev, mesmo processo FastAPI em produção).
-- Adicionados via middleware `security_headers` em `main.py`: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` e uma `Content-Security-Policy` restritiva. Confirmados na resposta com `curl -i` e sem erros de CSP no console durante o uso normal (imagens no chat, painel admin).
-
-### 8. Auditoria de cobertura de auth nas rotas
-
-O que testa: se alguma rota em `routers/` (auth, admin, sessions, knowledge, chat, pages) ficou sem a dependência de auth por esquecimento.
-
-Como foi feito: leitura de todas as rotas registradas nos 7 routers (`pages, auth, admin, sessions, snippets, knowledge, chat`) + a cadeia de dependências em `app/deps.py` (`usuario_atual → requer_senha_atualizada → admin_atual`), conferindo se cada uma usa a dependência correta para o que faz.
-
-Resultado: nenhuma rota está desprotegida por esquecimento.
-
-- Toda rota admin usa `admin_atual` (que já embute `requer_senha_atualizada` → `usuario_atual` por dependência encadeada).
+- Toda rota do painel admin usa `admin_atual` (que já embute as duas dependências anteriores).
 - Chat, sessões, `/snippets`, `/knowledge` e `/auth/me/memoria` usam `requer_senha_atualizada`.
-- `usuario_atual` (mais fraco) só aparece em `/auth/me` e `/auth/change-password` — intencional: precisam funcionar mesmo com `must_change_senha=True`, senão o usuário ficaria travado num loop de 403 sem conseguir trocar a própria senha.
-- Rotas realmente públicas (`/auth/register` sempre-403, `/auth/login`, `/auth/logout`, `/logo.png`, `/health`, fallback de SPA) não expõem dado nenhum.
-- `sessions.py`/`chat.py` também conferem *ownership* (`sessao_do_usuario` com `WHERE user_id = ...`), não só autenticação — reforça o teste 3 (IDOR).
-- Ordem de registro em `main.py` confirmada correta: o fallback de SPA é registrado por último, depois de todos os routers, então não pode "engolir" nenhuma rota de API.
+- `usuario_atual` (mais fraco) só aparece em `/auth/me` e `/auth/change-password` — precisam funcionar mesmo com `must_change_senha=True`, senão o usuário ficaria travado num loop de 403 sem conseguir trocar a própria senha.
+- Rotas públicas de fato: `/auth/register` (sempre `403`, cadastro desabilitado), `/auth/login`, `/auth/logout`, `/logo.png`, `/health`, fallback de SPA — nenhuma expõe dado.
+- `POST /auth/logout` não tem dependência de auth — chamá-lo deslogado só limpa uma sessão já vazia, sem risco.
 
-Único ponto estilístico (não é falha): `POST /auth/logout` não tem dependência — chamá-lo deslogado só limpa uma sessão já vazia. Inofensivo, deixado como está.
+### Isolamento entre usuários (IDOR)
 
-### 9. Rate limiting
+Toda rota que recebe um `session_id`/recurso por parâmetro confere posse antes de agir (`sessao_do_usuario`/consultas equivalentes com `WHERE user_id = usuario_atual.id`) — um usuário não consegue acessar sessão, mensagem ou recurso de outro usuário só por adivinhar/capturar o ID.
 
-O que testa: se rotas sensíveis a força bruta (`/auth/login`) ou a custo de API (`/chat`, `/compact`) tinham algum limite de requisições.
+### XSS em campos livres
 
-Como foi feito: adicionada a lib `slowapi` (rate limiter padrão para FastAPI, em memória — adequado aqui pois a POC roda um único processo `uvicorn`, sem réplicas): `POST /auth/login` (5/min, por IP — `get_remote_address`), `POST /chat` (20/min, por usuário logado — `get_user_or_ip`), `POST /sessions/{id}/compact` (10/min, por usuário logado). Testado disparando N+1 requisições seguidas de cada rota via `curl`, e também o cenário de dois usuários diferentes atrás do mesmo IP (simulando NAT corporativo).
+O chat e o resumo de sessão renderizam Markdown → HTML via `dangerouslySetInnerHTML` (`MessageBubble.tsx`, `ResumoBox.tsx`, parser próprio em `lib/markdown.tsx`, sem lib de sanitização externa). Conteúdo controlado pelo usuário (título de sessão, memória pessoal, entrada de base de conhecimento) é sempre escapado antes de renderizar — não vira HTML/JS executável. A `Content-Security-Policy` (abaixo) é a segunda camada de defesa caso um bug no parser deixe passar algo.
 
-Resultado (obtido):
+### Exposição da chave de API
 
-- 6ª tentativa de login seguida → `429` (`{"error": "Rate limit exceeded: 5 per 1 minute"}`) em vez de `401`.
-- 21ª chamada seguida a `/chat` (usuário A) → `429`.
-- 11ª chamada seguida a `/compact` (usuário A) → `429`.
-- **Teste do NAT**: logado como usuário B (mesmo IP/`localhost` do teste de A), imediatamente após A esgotar seus limites de `/chat` e `/compact` — B recebe `200` normalmente em ambas as rotas, confirmando que o limite é por usuário, não por IP compartilhado. `/auth/login` continua por IP (usuário ainda não autenticado nesse ponto) — ver limitação conhecida no roadmap.
-- Uso normal do app (poucas mensagens por minuto) não é afetado pelos limites.
+`DEEPSEEK_API_KEY` só existe no processo do backend — nunca aparece em request/response para o cliente nem no bundle do frontend.
 
-### 10. SQL injection
+### Erros sem vazamento de detalhe interno
 
-O que testa: se algum ponto do backend monta uma query SQL grudando (concatenação/f-string/`.format()`) valor de input externo direto na string, em vez de usar placeholder (`%s`) com o valor passado à parte para o driver. Diferente dos itens anteriores, **isso não dá pra testar pelo DevTools do navegador** — é uma falha server-side, no código Python; a verificação foi por leitura de código, não por interação em runtime.
+Respostas de erro não expõem stack trace nem caminho de arquivo Python — só a mensagem tratada (`LLMErro`/`HTTPException` com `detail`).
 
-Como foi feito: auditadas as chamadas `cur.execute(...)` em `app/repositories/*.py` e `app/routers/admin.py` (todo o SQL cru do backend vive majoritariamente ali, via `psycopg`, sem ORM), conferindo se cada uma usa placeholder `%s` com valores passados à parte, ou se algum trecho interpola valor dinâmico direto na string antes do `execute()`. Como placeholder `%s` protege **valores** mas não protege **identificadores** (nome de tabela/coluna) nem palavras-chave SQL (ex.: direção `ASC`/`DESC` de um `ORDER BY`) — esse tipo de coisa exigiria lista branca, não dá pra parametrizar —, foi feita uma segunda passada específica: busca por todas as ocorrências de `ORDER BY` no backend inteiro para confirmar que nenhuma coluna nem direção vem de input do cliente.
+### Headers de resposta HTTP e CORS
 
-Resultado: **nenhuma vulnerabilidade encontrada.**
+Não há `CORSMiddleware` no backend — front e back são sempre a mesma origem do ponto de vista do navegador (proxy do Vite em dev, mesmo processo FastAPI em produção), então nunca há necessidade de CORS; `allow_origins=["*"]` abriria a API (autenticada por cookie de sessão) para leitura por qualquer site.
 
-- Toda query com valor dinâmico usa `%s` com os valores passados como tupla separada para `execute()` — nunca concatenados/formatados na própria string SQL. Isso vale também para a busca por conteúdo (`GET /sessions/search`, `buscar_mensagens`/`buscar_sessoes_por_titulo` em `repositories/sessions.py`): o termo do usuário vira `f"%{termo}%"` **em Python**, mas esse valor pronto é passado como parâmetro `%s` do `ILIKE %s` — nunca colado na string SQL. É a forma segura de fazer wildcard com `LIKE`/`ILIKE`.
-- Duas queries (`atualizar_usuario` em `users.py` e `editar_conhecimento` em `knowledge.py`) montam a cláusula `SET` dinamicamente via f-string, mas só com fragmentos literais fixos do próprio código (`"email = %s"`, `"titulo = %s"` etc.), escolhidos por `if campo is not None` — nunca a partir de nome de coluna vindo de input externo. Os valores em si sempre passam por `%s`/tupla. É o padrão comum e seguro de "atualizar só os campos informados". Mesmo padrão em `GET /admin/cache-stats` e `GET /admin/dashboard` (`admin.py`, fora de `repositories/`): a f-string ali só escolhe entre strings literais fixas (ex.: `"WHERE user_id = %s"` ou `""`) conforme um filtro foi passado ou não — nunca monta nome de coluna a partir de input.
-- **A busca da base de conhecimento** (por título/conteúdo/categoria/autor, na aba Base de Conhecimento) continua sendo feita inteiramente no cliente (`.filter()`/`.includes()` em JS) — só a busca de **conversas** (`Ctrl+K`, `/sessions/search`) e o dashboard viraram consultas SQL server-side desde a introdução dessas features.
-- **Nenhuma ocorrência de `ORDER BY` no backend é dinâmica** — toda coluna e toda direção (`ASC`/`DESC`) usada é um literal fixo escrito no código; não existe endpoint que aceite algo como `?order_by=` ou `?dir=` do cliente.
+Um middleware em `main.py` (`security_headers`) anexa três headers em toda resposta:
+
+- `X-Content-Type-Options: nosniff` — impede o navegador de reinterpretar o tipo de um arquivo diferente do `Content-Type` declarado.
+- `X-Frame-Options: DENY` — impede que o app seja carregado dentro de um `<iframe>` em outro site (clickjacking).
+- `Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'` — bloqueia por padrão script/estilo/imagem/conexão de origem diferente da própria. `img-src data:` cobre `data:` URIs em Markdown de mensagens antigas; `style-src 'unsafe-inline'` é necessário porque vários componentes React usam `style={{...}}` inline (`KnowledgeTab`, `UsersTab`).
+
+Esse header só se aplica quando o **FastAPI** serve a resposta — produção (`npm run build` + backend) e chamadas de API mesmo em dev. Rodando `npm run dev`, o HTML vem direto do Vite em `:5173`, sem passar pelo backend; por isso `frontend/index.html` já tem a mesma política numa tag `<meta http-equiv="Content-Security-Policy">`, que cobre esse caso e também é servida dentro do build de produção (as duas coexistem, sem conflito).
+
+Fora de escopo por enquanto: `Strict-Transport-Security` (HSTS) — só faz sentido quando o app rodar atrás de TLS de verdade (hoje é HTTP local, `https_only=False` no `SessionMiddleware`).
+
+### Rate limiting
+
+`slowapi` (`Limiter` em `app/config.py`, registrado em `main.py`), em memória (adequado para um único processo `uvicorn`; múltiplas réplicas exigiriam um backend compartilhado, ex. Redis):
+
+- `POST /auth/login` — 5/min, por IP (`get_remote_address` — ainda não há usuário autenticado nesse ponto).
+- `POST /chat` — 20/min, por usuário logado (`get_user_or_ip`, lê `request.session["user_id"]`).
+- `POST /sessions/{id}/compact` — 10/min, por usuário logado.
+
+Limite excedido devolve `429`. A chave por usuário (em vez de por IP) em `/chat`/`/compact` importa em rede corporativa com NAT: se fosse por IP, todo mundo atrás do mesmo IP externo compartilharia o mesmo teto — um punhado de engenheiros conversando ao mesmo tempo esgotaria o limite pra todo mundo. Por usuário, cada engenheiro tem seu próprio teto, independente de quantas outras pessoas estão atrás do mesmo IP. `/auth/login` continua por IP porque, nesse ponto, ainda não há `user_id` disponível como chave — ver limitação conhecida no roadmap.
+
+### SQL injection
+
+Todo o SQL cru do backend (`app/repositories/*.py`, `app/routers/admin.py`, via `psycopg`, sem ORM) usa placeholder `%s` com os valores passados como tupla separada para `execute()` — nunca concatenados/formatados direto na string SQL. Isso vale inclusive para busca com wildcard (`GET /sessions/search`): o termo vira `f"%{termo}%"` em Python, mas esse valor pronto é passado como parâmetro `%s` do `ILIKE %s`, nunca colado na string.
+
+Duas queries (`atualizar_usuario` em `users.py`, `editar_conhecimento` em `knowledge.py`) montam a cláusula `SET` dinamicamente via f-string, mas só com fragmentos literais fixos do próprio código (`"email = %s"`, `"titulo = %s"` etc.), escolhidos por `if campo is not None` — nunca a partir de nome de coluna vindo de input externo; os valores em si sempre passam por `%s`. Mesmo padrão em `GET /admin/cache-stats` e `GET /admin/dashboard`. Nenhuma ocorrência de `ORDER BY` no backend é dinâmica — coluna e direção (`ASC`/`DESC`) são sempre literais fixos no código; não existe endpoint que aceite `?order_by=`/`?dir=` do cliente.
+
+A busca da base de conhecimento (por título/conteúdo/categoria/autor, aba Base de Conhecimento) é feita no cliente (`.filter()`/`.includes()` em JS); só a busca de conversas (`Ctrl+K`, `/sessions/search`) e o dashboard são consultas SQL server-side.
 
 ## Fora de escopo (roadmap)
 
-Escrita/execução real no NX (NXOpen), log de auditoria de acesso administrativo, `Strict-Transport-Security` (HSTS) quando o app rodar atrás de TLS de verdade.
+Escrita/execução real no NX (NXOpen), log de auditoria de acesso administrativo, `Strict-Transport-Security` (HSTS) quando o app rodar atrás de TLS de verdade, suporte a imagem no chat (a DeepSeek não tem visão), medição isolada do ganho de cada otimização de tokens (concisão de tom, dedup de RAG por sessão, `resumo_rag`) via `AVG(input_tokens)`/`AVG(output_tokens)`/`AVG(cache_read_input_tokens)` em `cache_usage_log`.
 
-**Limitação conhecida — `/auth/login` por IP em rede com NAT.** Diferente de `/chat`/`/compact`, o rate limit de login (5/min) é por IP porque o usuário ainda não está autenticado nesse ponto — não há `user_id` disponível como chave. Numa rede corporativa onde todo mundo sai pelo mesmo IP externo, isso significa que o teto de 5 tentativas/min é compartilhado pela empresa toda: numa manhã de pico com vários engenheiros logando ao mesmo tempo, alguém pode levar `429` mesmo digitando a senha certa. Mitigações possíveis quando isso incomodar na prática: teto mais folgado, um limite combinado por email tentado (em vez de só por IP), ou CAPTCHA — nenhuma foi implementada agora para não aumentar o escopo da POC além do necessário.
+**Limitação conhecida — `/auth/login` por IP em rede com NAT.** O rate limit de login (5/min) é por IP porque o usuário ainda não está autenticado nesse ponto — não há `user_id` disponível como chave. Numa rede corporativa onde todo mundo sai pelo mesmo IP externo, o teto de 5 tentativas/min é compartilhado pela empresa toda: numa manhã de pico com vários engenheiros logando ao mesmo tempo, alguém pode levar `429` mesmo digitando a senha certa. Mitigações possíveis: teto mais folgado, um limite combinado por email tentado (em vez de só por IP), ou CAPTCHA.
 
-**Medição das otimizações de tokens (concisão de tom, dedup de RAG por sessão, `resumo_rag`).** As três otimizações acima foram implementadas e commitadas juntas; o ideal para atribuir o ganho de cada uma isoladamente seria medir `AVG(input_tokens)`, `AVG(output_tokens)` e `AVG(cache_read_input_tokens)` em `cache_usage_log` antes/depois de cada uma, espaçadas por alguns dias de uso real — não foi feito aqui por decisão explícita de entregar tudo de uma vez. Fica como próximo passo, se for necessário justificar o ganho de cada otimização separadamente para a diretoria.
-
-**Tarifa de pico da DeepSeek não é fixa.** A DeepSeek anunciou que vai adotar tarifa dobrada (2x) em horário de pico (fuso de Pequim), sem data efetiva definida no momento em que este provider foi integrado. Horário comercial em Piracicaba cai no fora-de-pico de Pequim, então tende a favorecer — mas o preço não está travado; vale conferir a documentação oficial periodicamente e não assumir `PRECO_MISS`/`PRECO_HIT`/`PRECO_OUTPUT` (`app/config.py`) como permanentes.
-
-**Suporte a visão da DeepSeek ainda não confirmado.** O anexo/paste de imagem no chat está reativado (formato `image_url` OpenAI-compatible), mas só foi validado de ponta a ponta via `LLM_PROVIDER=openrouter` com um modelo de visão — não com a DeepSeek direto (provider padrão). Se enviar imagem sob a DeepSeek e não funcionar, a falha cai nos mesmos `LLMErro`/`LLMConexaoFalhou` já tratados (mensagem amigável no chat, sem derrubar a conexão), mas vale confirmar com um teste real antes de assumir suporte.
+**Tarifa de pico da DeepSeek não é fixa.** A DeepSeek pode adotar tarifa dobrada (2x) em horário de pico (fuso de Pequim). Horário comercial em Piracicaba cai no fora-de-pico de Pequim, então tende a favorecer — mas o preço não está travado; `PRECO_MISS`/`PRECO_HIT`/`PRECO_OUTPUT` (`app/config.py`) não devem ser tratados como permanentes.

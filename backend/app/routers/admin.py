@@ -52,10 +52,10 @@ def admin_criar_usuario(req: AdminCreateUser, admin: dict = Depends(admin_atual)
     if len(req.senha) < 8:
         raise HTTPException(status_code=400, detail="A senha deve ter ao menos 8 caracteres")
     try:
-        user_id = criar_usuario(email, hash_senha(req.senha), req.nivel, req.role)
+        user_id = criar_usuario(email, hash_senha(req.senha), req.role)
     except psycopg.errors.UniqueViolation:
         raise HTTPException(status_code=409, detail="Email já cadastrado")
-    return {"id": user_id, "email": email, "nivel": req.nivel, "role": req.role}
+    return {"id": user_id, "email": email, "role": req.role}
 
 
 @router.patch("/users/{user_id}")
@@ -75,7 +75,7 @@ def admin_editar_usuario(
         raise HTTPException(status_code=400, detail="Você não pode remover seu próprio acesso de admin")
 
     try:
-        atualizar_usuario(user_id, email=email, nivel=req.nivel, role=req.role)
+        atualizar_usuario(user_id, email=email, role=req.role)
     except psycopg.errors.UniqueViolation:
         raise HTTPException(status_code=409, detail="Email já cadastrado")
     return {"ok": True}

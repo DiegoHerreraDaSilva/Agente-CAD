@@ -7,7 +7,6 @@ import type {
   KnowledgeStatus,
   LoginResposta,
   Mensagem,
-  Nivel,
   Role,
   SessaoDetalhe,
   SessaoResumo,
@@ -163,15 +162,15 @@ export const listarConhecimento = () => req<{ entries: KnowledgeEntry[] }>("/kno
 // ---------------------------------------------------------------------------
 export const adminListarUsuarios = () => req<{ users: AdminUsuario[] }>("/admin/users");
 
-export const adminCriarUsuario = (email: string, senha: string, nivel: Nivel, role: Role) =>
-  req<{ id: number; email: string; nivel: Nivel; role: Role }>("/admin/users", {
+export const adminCriarUsuario = (email: string, senha: string, role: Role) =>
+  req<{ id: number; email: string; role: Role }>("/admin/users", {
     method: "POST",
-    body: JSON.stringify({ email, senha, nivel, role }),
+    body: JSON.stringify({ email, senha, role }),
   });
 
 export const adminEditarUsuario = (
   id: number,
-  patch: { email?: string; nivel?: Nivel; role?: Role },
+  patch: { email?: string; role?: Role },
 ) => req<{ ok: boolean }>(`/admin/users/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
 
 export const adminTrocarSenha = (id: number, senha: string) =>

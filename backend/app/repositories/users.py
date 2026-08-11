@@ -9,7 +9,7 @@ from app.config import ADMIN_EMAILS
 from app.db import _pg_conninfo
 from app.security import hash_senha
 
-_USER_COLS = ["id", "email", "senha_hash", "nivel", "memoria", "role", "must_change_senha"]
+_USER_COLS = ["id", "email", "senha_hash", "memoria", "role", "must_change_senha"]
 
 
 def _row_to_user(row) -> dict:
@@ -20,7 +20,7 @@ def buscar_usuario_por_email(email: str) -> Optional[dict]:
     with psycopg.connect(_pg_conninfo()) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, email, senha_hash, nivel, memoria, role, must_change_senha FROM users WHERE email = %s",
+                "SELECT id, email, senha_hash, memoria, role, must_change_senha FROM users WHERE email = %s",
                 (email,),
             )
             row = cur.fetchone()
@@ -31,7 +31,7 @@ def buscar_usuario_por_id(user_id: int) -> Optional[dict]:
     with psycopg.connect(_pg_conninfo()) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, email, senha_hash, nivel, memoria, role, must_change_senha FROM users WHERE id = %s",
+                "SELECT id, email, senha_hash, memoria, role, must_change_senha FROM users WHERE id = %s",
                 (user_id,),
             )
             row = cur.fetchone()
@@ -41,7 +41,6 @@ def buscar_usuario_por_id(user_id: int) -> Optional[dict]:
 def criar_usuario(
     email: str,
     senha_hash: str,
-    nivel: str,
     role: str = "engineer",
     must_change_senha: bool = True,
 ) -> int:
@@ -50,9 +49,9 @@ def criar_usuario(
     with psycopg.connect(_pg_conninfo()) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO users (email, senha_hash, nivel, role, must_change_senha) "
-                "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                (email, senha_hash, nivel, role, must_change_senha),
+                "INSERT INTO users (email, senha_hash, role, must_change_senha) "
+                "VALUES (%s, %s, %s, %s) RETURNING id",
+                (email, senha_hash, role, must_change_senha),
             )
             user_id = cur.fetchone()[0]
         conn.commit()
@@ -79,7 +78,7 @@ def seed_admins() -> None:
             if buscar_usuario_por_email(email):
                 continue
             temp = secrets.token_urlsafe(12)
-            criar_usuario(email, hash_senha(temp), "pleno", "admin")
+            criar_usuario(email, hash_senha(temp), "admin")
             print(
                 f"[bootstrap] admin criado: {email} — senha temporária: {temp} "
                 "(troque no painel /admin após o login)"
@@ -92,15 +91,14 @@ def listar_usuarios() -> list[dict]:
     with psycopg.connect(_pg_conninfo()) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, email, nivel, role, criado_em FROM users ORDER BY id"
+                "SELECT id, email, role, criado_em FROM users ORDER BY id"
             )
             linhas = [
                 {
                     "id": r[0],
                     "email": r[1],
-                    "nivel": r[2],
-                    "role": r[3],
-                    "criado_em": r[4].isoformat(),
+                    "role": r[2],
+                    "criado_em": r[3].isoformat(),
                 }
                 for r in cur.fetchall()
             ]
@@ -110,16 +108,12 @@ def listar_usuarios() -> list[dict]:
 def atualizar_usuario(
     user_id: int,
     email: Optional[str] = None,
-    nivel: Optional[str] = None,
     role: Optional[str] = None,
 ) -> None:
     campos, valores = [], []
     if email is not None:
         campos.append("email = %s")
         valores.append(email)
-    if nivel is not None:
-        campos.append("nivel = %s")
-        valores.append(nivel)
     if role is not None:
         campos.append("role = %s")
         valores.append(role)

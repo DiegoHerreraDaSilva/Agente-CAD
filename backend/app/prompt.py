@@ -1,42 +1,36 @@
-"""Montagem do system prompt, do bloco de conhecimento recuperado por RAG e
-validação de imagens anexadas."""
+"""Montagem do system prompt e do bloco de conhecimento recuperado por RAG."""
 
-import base64
+import re
 
-from fastapi import HTTPException
-
-from app.config import (
-    DATA_URL_RE,
-    MAX_BYTES_POR_IMAGEM,
-    MAX_IMAGENS_POR_MENSAGEM,
-    MEDIA_TYPES_PERMITIDOS,
-)
-
-TOM_POR_NIVEL = {
-    "estagiario": (
-        "O engenheiro é estagiário, em início de aprendizado. Explique de forma "
-        "bem didática e acolhedora, partindo do básico e sem pressupor experiência "
-        "prévia. Defina TODOS os termos técnicos e dê exemplos simples e concretos. "
-        "Evite jargão; quando usar, explique."
-    ),
-    "junior": (
-        "O engenheiro é júnior. Explique conceitos do zero, defina termos técnicos, "
-        "e dê o passo a passo com bastante detalhe. Evite jargão sem explicação."
-    ),
-    "pleno": (
-        "O engenheiro é pleno. Seja direto e prático, assuma familiaridade com o NX "
-        "e conceitos de CAD, mas ainda justifique recomendações não óbvias."
-    ),
-    "senior": (
-        "O engenheiro é sênior. Seja conciso e de alto nível, foque em trade-offs, "
-        "casos de borda e boas práticas avançadas. Pode usar jargão livremente."
-    ),
-}
+# Casa a marcação Markdown que versões anteriores usavam pra persistir imagem
+# colada/anexada no chat (feature removida) — a data URL inteira (base64),
+# que podia ter megabytes, ficava embutida no texto da mensagem. Mantido só
+# pra sanear sessões antigas que ainda têm esse conteúdo salvo no banco;
+# NUNCA deve ser reenviado como texto puro pro LLM (ver sanitizar_historico_para_llm).
+IMAGEM_MD_RE = re.compile(r"!\[imagem colada\]\(data:[^)]*\)")
 
 
-def montar_system_prompt(nivel: str, memoria: str, resumo: str = "") -> str:
-    """Monta o system prompt (prefixo estável da sessão): tom por nível,
-    memória pessoal e, se houver, o resumo da sessão. A DeepSeek cacheia esse
+def sanitizar_historico_para_llm(mensagens: list[dict]) -> list[dict]:
+    """Substitui data URLs de imagem embutidas em mensagens ANTIGAS do
+    histórico (de sessões de quando o anexo de imagem ainda existia) por um
+    placeholder curto, antes de mandar pro LLM — sem isso, esse blob de texto
+    gigante seria reenviado LITERALMENTE como parte do histórico em todo
+    turno seguinte e estoura a janela de contexto da DeepSeek, derrubando a
+    chamada com 400."""
+    saneadas = []
+    for m in mensagens:
+        content = m["content"]
+        if isinstance(content, str) and IMAGEM_MD_RE.search(content):
+            content = IMAGEM_MD_RE.sub("[imagem anexada anteriormente]", content)
+            saneadas.append({**m, "content": content})
+        else:
+            saneadas.append(m)
+    return saneadas
+
+
+def montar_system_prompt(memoria: str, resumo: str = "") -> str:
+    """Monta o system prompt (prefixo estável da sessão): tom fixo, memória
+    pessoal e, se houver, o resumo da sessão. A DeepSeek cacheia esse
     prefixo automaticamente (sem marcação no request) quando repete entre
     turnos — ver README, seção "LLM: DeepSeek".
 
@@ -44,18 +38,17 @@ def montar_system_prompt(nivel: str, memoria: str, resumo: str = "") -> str:
     pergunta) — por isso vai no turno atual (ver montar_bloco_conhecimento +
     chat.py), não no prefixo estável.
     """
-    tom = TOM_POR_NIVEL.get(nivel, TOM_POR_NIVEL["pleno"])
     memoria_txt = memoria.strip() or "(sem memória pessoal registrada ainda)"
 
     bloco_tom = (
-        "Você é um consultor técnico de engenharia CAD especializado em Siemens NX da Schwaben Engineering, "
+        "Você é um consultor técnico de engenharia CAD especializado em Siemens NX da empresa Schwaben Engineering, "
         "empresa especializada em desenvolvimento de produtos automotivos (caminhões, carros e ônibus)."
         "Você é ESTRITAMENTE CONSULTIVO: oriente, explique e recomende, mas NUNCA "
         "afirme que executou ou executará qualquer ação dentro do NX — você não tem "
-        "acesso ao software. Responda em português do Brasil.\n\n"
-        f"Ajuste de tom para este usuário: {tom}\n\n"
-        "Regras de forma (valem para todos os níveis, inclusive estagiário/júnior — "
-        "não reduzem a explicação do conteúdo técnico, só cortam texto de forma):\n"
+        "acesso ao software. Responda em português do Brasil. Seja direto e prático, "
+        "mas justifique recomendações não óbvias.\n\n"
+        "Regras de forma (não reduzem a explicação do conteúdo técnico, só cortam "
+        "texto de forma):\n"
         "- Comece pela resposta. Não recapitule a pergunta nem anuncie o que vai fazer.\n"
         "- Não termine com um resumo do que acabou de dizer.\n"
         "- Não repita informação já dita nesta conversa — referencie em vez de repetir "
@@ -112,31 +105,3 @@ def montar_bloco_conhecimento(entradas: list[dict]) -> str:
         f"{corpo}\n"
         "--- FIM DO CONHECIMENTO ---"
     )
-
-
-def validar_imagens(imagens: list[str]) -> list[str]:
-    """Valida data URLs de imagens coladas/anexadas no chat (formato, tipo
-    MIME e tamanho). Retorna a mesma lista de data URLs (já validada) — o
-    formato OpenAI-compatible aceita a data URL inteira em `image_url.url`,
-    sem precisar separar media_type/base64 como no formato da Anthropic.
-    Levanta HTTPException se algo estiver fora do esperado (evita repassar
-    lixo/arquivos grandes à API)."""
-    if len(imagens) > MAX_IMAGENS_POR_MENSAGEM:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Máximo de {MAX_IMAGENS_POR_MENSAGEM} imagens por mensagem.",
-        )
-    for data_url in imagens:
-        m = DATA_URL_RE.match(data_url)
-        if not m:
-            raise HTTPException(status_code=400, detail="Imagem em formato inválido.")
-        media_type, b64data = m.group(1), m.group(2)
-        if media_type not in MEDIA_TYPES_PERMITIDOS:
-            raise HTTPException(status_code=400, detail=f"Tipo de imagem não suportado: {media_type}")
-        try:
-            bruto = base64.b64decode(b64data, validate=True)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Imagem corrompida (base64 inválido).")
-        if len(bruto) > MAX_BYTES_POR_IMAGEM:
-            raise HTTPException(status_code=400, detail="Imagem excede o limite de 5 MB.")
-    return imagens

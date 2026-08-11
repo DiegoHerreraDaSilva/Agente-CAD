@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from app.config import get_user_or_ip, limiter
 from app.deps import requer_senha_atualizada
 from app.llm import LLMConexaoFalhou, LLMErro, LLMLimiteRequisicoes, LLMSobrecarregado, resposta_stream
-from app.prompt import montar_bloco_conhecimento, montar_system_prompt, validar_imagens
+from app.prompt import montar_bloco_conhecimento, montar_system_prompt, sanitizar_historico_para_llm
 from app.repositories.knowledge import recuperar_conhecimento, registrar_uso_cache
 from app.repositories.sessions import (
     adicionar_mensagem,
@@ -30,27 +30,21 @@ def chat(request: Request, req: ChatRequest, usuario: dict = Depends(requer_senh
     if not sessao:
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
 
-    # Valida formato/tipo/tamanho das imagens anexadas (400 se algo estiver
-    # fora do esperado). Suporte a visão depende do modelo configurado — a
-    # DeepSeek (provider padrão) não suporta; ver README, seção "LLM".
-    imagens_validas = validar_imagens(req.imagens)
-
     # Título automático só quando a sessão é realmente nova (sem mensagens e
     # sem resumo) — após um /compact as mensagens são apagadas, e isso não deve
     # disparar renomeação.
     if not sessao["tem_mensagens"] and not sessao["resumo"]:
         definir_titulo(req.session_id, gerar_titulo(req.pergunta))
 
-    # Persiste a mensagem do usuário (texto + marcações Markdown das imagens,
-    # para que reapareçam ao recarregar a sessão — extrairImagensDoConteudo no
-    # front já sabe ler esse formato) e monta o histórico (multi-turn).
-    conteudo_armazenado = req.pergunta
-    if imagens_validas:
-        anexos_md = "\n".join(f"![imagem colada]({url})" for url in imagens_validas)
-        conteudo_armazenado = (conteudo_armazenado + "\n\n" + anexos_md).strip()
-    adicionar_mensagem(req.session_id, "user", conteudo_armazenado)
+    adicionar_mensagem(req.session_id, "user", req.pergunta)
     historico = carregar_mensagens(req.session_id)
     messages = [{"role": m["papel"], "content": m["conteudo"]} for m in historico]
+    # Sessões antigas podem ter imagem colada (data URL inteira, potencialmente
+    # megabytes) persistida em algum turno anterior (feature removida) — sem
+    # isso, esse texto gigante seria reenviado literalmente pro LLM em todo
+    # turno seguinte e estoura o contexto da DeepSeek. messages[-1] (turno
+    # atual) é sobrescrito abaixo de qualquer forma, então fica de fora.
+    messages[:-1] = sanitizar_historico_para_llm(messages[:-1])
 
     # RAG: recupera as entradas mais relevantes para a pergunta e injeta no
     # TURNO ATUAL. Degrada graciosamente: recuperar_conhecimento retorna []
@@ -68,24 +62,9 @@ def chat(request: Request, req: ChatRequest, usuario: dict = Depends(requer_senh
     texto_turno = req.pergunta
     if bloco_conhecimento:
         texto_turno = f"{bloco_conhecimento}\n\n{req.pergunta}"
+    messages[-1] = {"role": "user", "content": texto_turno}
 
-    if imagens_validas:
-        # Formato OpenAI-compatible: content vira uma lista de partes
-        # (image_url + text) em vez de string simples. Texto primeiro, sem
-        # ordem estrita exigida pela API, mas deixa a intenção mais legível.
-        messages[-1] = {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": texto_turno or "Veja a(s) imagem(ns) anexada(s)."},
-                *[{"type": "image_url", "image_url": {"url": url}} for url in imagens_validas],
-            ],
-        }
-    else:
-        messages[-1] = {"role": "user", "content": texto_turno}
-
-    system_prompt = montar_system_prompt(
-        usuario["nivel"], usuario["memoria"], sessao["resumo"]
-    )
+    system_prompt = montar_system_prompt(usuario["memoria"], sessao["resumo"])
 
     def gerar():
         partes: list[str] = []

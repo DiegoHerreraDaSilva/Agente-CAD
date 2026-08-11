@@ -4,14 +4,12 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-Nivel = Literal["estagiario", "junior", "pleno", "senior"]
 Role = Literal["engineer", "admin"]
 
 
 class ChatRequest(BaseModel):
     session_id: int
     pergunta: str
-    imagens: list[str] = []
 
 
 class RenameRequest(BaseModel):
@@ -30,7 +28,6 @@ class SnippetRequest(BaseModel):
 class RegisterRequest(BaseModel):
     email: str
     senha: str
-    nivel: Nivel
 
 
 class LoginRequest(BaseModel):
@@ -45,13 +42,11 @@ class MemoriaRequest(BaseModel):
 class AdminCreateUser(BaseModel):
     email: str
     senha: str
-    nivel: Nivel
     role: Role = "engineer"
 
 
 class AdminUpdateUser(BaseModel):
     email: Optional[str] = None
-    nivel: Optional[Nivel] = None
     role: Optional[Role] = None
 
 

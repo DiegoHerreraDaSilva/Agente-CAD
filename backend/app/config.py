@@ -24,50 +24,27 @@ try:
 except ImportError:
     pass
 
-# --- LLM: DeepSeek (padrão) ou OpenRouter (teste) ----------------------------
-# Ambas são APIs OpenAI-compatible — só troca base_url/api_key/model. O switch
-# é só pra TESTE (LLM_PROVIDER=openrouter no .env); em produção o padrão
-# continua DeepSeek direto. Slug DeepSeek explícito — os aliases legados
-# deepseek-chat/deepseek-reasoner foram descontinuados em 24/07/2026.
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek").strip().lower()
-
+# --- LLM: DeepSeek ------------------------------------------------------------
+# Slug explícito — os aliases legados deepseek-chat/deepseek-reasoner foram
+# descontinuados em 24/07/2026.
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat")
 
-if LLM_PROVIDER == "openrouter":
-    if not OPENROUTER_API_KEY:
-        raise RuntimeError(
-            "LLM_PROVIDER=openrouter mas OPENROUTER_API_KEY não está definida no .env. "
-            "Gere uma em openrouter.ai/keys."
-        )
-    LLM_MODEL = OPENROUTER_MODEL
-    # truststore.inject_into_ssl() acima já cobre o TLS corporativo pra qualquer
-    # host, sem config extra por client.
-    llm_client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY, max_retries=4)
-    # Sem tabela de preço por modelo do OpenRouter integrada ainda — zerado pra
-    # não mostrar custo errado no /admin/cache-stats enquanto for só teste
-    # (o modelo padrão de teste, aliás, é ":free").
-    PRECO_MISS = 0.0
-    PRECO_HIT = 0.0
-    PRECO_OUTPUT = 0.0
-else:
-    if not DEEPSEEK_API_KEY:
-        # Falha rápido: sem essa chave o app não funciona de jeito nenhum —
-        # melhor travar no startup do que só descobrir na primeira mensagem de chat.
-        raise RuntimeError(
-            "DEEPSEEK_API_KEY não está definida no .env. "
-            "Gere uma em platform.deepseek.com."
-        )
-    LLM_MODEL = DEEPSEEK_MODEL
-    llm_client = OpenAI(base_url="https://api.deepseek.com", api_key=DEEPSEEK_API_KEY, max_retries=4)
-    # Preços da DeepSeek (USD por token), pra estimar o custo no painel de admin
-    # (/admin/cache-stats). "miss" = input não cacheado, "hit" = lido do cache
-    # automático (a DeepSeek não tem conceito de "cache write" pago à parte).
-    PRECO_MISS = 0.14 / 1_000_000
-    PRECO_HIT = 0.0028 / 1_000_000
-    PRECO_OUTPUT = 0.28 / 1_000_000
+if not DEEPSEEK_API_KEY:
+    # Falha rápido: sem essa chave o app não funciona de jeito nenhum —
+    # melhor travar no startup do que só descobrir na primeira mensagem de chat.
+    raise RuntimeError(
+        "DEEPSEEK_API_KEY não está definida no .env. "
+        "Gere uma em platform.deepseek.com."
+    )
+LLM_MODEL = DEEPSEEK_MODEL
+llm_client = OpenAI(base_url="https://api.deepseek.com", api_key=DEEPSEEK_API_KEY, max_retries=4)
+# Preços da DeepSeek (USD por token), pra estimar o custo no painel de admin
+# (/admin/cache-stats). "miss" = input não cacheado, "hit" = lido do cache
+# automático (a DeepSeek não tem conceito de "cache write" pago à parte).
+PRECO_MISS = 0.14 / 1_000_000
+PRECO_HIT = 0.0028 / 1_000_000
+PRECO_OUTPUT = 0.28 / 1_000_000
 
 PUBLIC_DIR = Path(__file__).parent.parent.parent / "public"
 FRONTEND_DIST = Path(__file__).parent.parent.parent / "frontend" / "dist"
@@ -78,16 +55,6 @@ if not SESSION_SECRET:
     print("[aviso] SESSION_SECRET não definido no .env — usando segredo de dev.")
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-# --- Anexo de imagem no chat --------------------------------------------------
-# Formato OpenAI-compatible (image_url com data URL) — funciona com qualquer
-# provider/modelo com suporte a visão (a DeepSeek não suporta; verificar o
-# modelo escolhido se estiver usando LLM_PROVIDER=openrouter). Validado em
-# app/prompt.py:validar_imagens antes de repassar à API.
-MAX_IMAGENS_POR_MENSAGEM = 4
-MAX_BYTES_POR_IMAGEM = 5 * 1024 * 1024
-MEDIA_TYPES_PERMITIDOS = {"image/png", "image/jpeg", "image/gif", "image/webp"}
-DATA_URL_RE = re.compile(r"^data:(image/[a-zA-Z+]+);base64,(.+)$", re.DOTALL)
 
 # Emails que viram admin (TI) automaticamente ao logar/cadastrar.
 ADMIN_EMAILS = {

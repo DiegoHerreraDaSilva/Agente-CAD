@@ -1,11 +1,9 @@
-export type Nivel = "estagiario" | "junior" | "pleno" | "senior";
 export type Role = "engineer" | "admin";
 export type KnowledgeStatus = "pendente" | "aprovado" | "rejeitado";
 
 export interface Usuario {
   id: number;
   email: string;
-  nivel: Nivel;
   memoria: string;
   role: Role;
   must_change_senha: boolean;
@@ -13,7 +11,6 @@ export interface Usuario {
 
 export interface LoginResposta {
   email: string;
-  nivel: Nivel;
   must_change_senha: boolean;
 }
 
@@ -105,7 +102,6 @@ export interface DashboardStats {
 export interface AdminUsuario {
   id: number;
   email: string;
-  nivel: Nivel;
   role: Role;
   criado_em: string;
 }

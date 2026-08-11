@@ -10,7 +10,6 @@ CREATE TABLE IF NOT EXISTS users (
     id         SERIAL PRIMARY KEY,
     email      TEXT UNIQUE NOT NULL,
     senha_hash TEXT NOT NULL,
-    nivel      TEXT NOT NULL CHECK (nivel IN ('estagiario', 'junior', 'pleno', 'senior')),
     role       TEXT NOT NULL DEFAULT 'engineer',
     memoria    TEXT NOT NULL DEFAULT '',
     must_change_senha BOOLEAN NOT NULL DEFAULT false,

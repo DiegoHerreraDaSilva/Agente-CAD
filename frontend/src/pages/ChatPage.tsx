@@ -32,13 +32,6 @@ import {
 } from "../lib/api";
 import type { SessaoResumo } from "../lib/types";
 
-const NIVEL_LABEL: Record<string, string> = {
-  estagiario: "Estagiário",
-  junior: "Júnior",
-  pleno: "Pleno",
-  senior: "Sênior",
-};
-
 interface MensagemUI {
   id: number;
   msgId?: number;
@@ -358,7 +351,6 @@ export default function ChatPage() {
       <Header marca="Assistente Engenharia">
         <span className="user-info">
           <strong>{usuario.email}</strong>
-          <span className="nivel-badge">{NIVEL_LABEL[usuario.nivel] || usuario.nivel}</span>
         </span>
         {usuario.role === "admin" && (
           <Link className="btn-sec" to="/admin">Admin</Link>

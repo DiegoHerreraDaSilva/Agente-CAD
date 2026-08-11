@@ -7,19 +7,12 @@ import {
   adminTrocarSenha,
   ApiError,
 } from "../../lib/api";
-import type { AdminUsuario, Nivel, Role } from "../../lib/types";
+import type { AdminUsuario, Role } from "../../lib/types";
 import { use401Redirect } from "../../hooks/use401Redirect";
 import { useAuthContext } from "../../context/AuthContext";
 import EditarUsuarioModal from "./EditarUsuarioModal";
 import TrocarSenhaModal from "./TrocarSenhaModal";
 import { IconLapis, IconLixeira, IconSenha } from "../icons/Icons";
-
-const NIVEL_LABEL: Record<Nivel, string> = {
-  estagiario: "Estagiário",
-  junior: "Júnior",
-  pleno: "Pleno",
-  senior: "Sênior",
-};
 
 interface UsersTabProps {
   onAviso: (msg: string, tipo: "ok" | "erro") => void;
@@ -34,7 +27,6 @@ export default function UsersTab({ onAviso }: UsersTabProps) {
 
   const [novoEmail, setNovoEmail] = useState("");
   const [novaSenha, setNovaSenha] = useState("");
-  const [novoNivel, setNovoNivel] = useState<Nivel>("pleno");
   const [novoRole, setNovoRole] = useState<Role>("engineer");
   const [criando, setCriando] = useState(false);
 
@@ -59,7 +51,7 @@ export default function UsersTab({ onAviso }: UsersTabProps) {
   async function criarUsuario() {
     setCriando(true);
     try {
-      await adminCriarUsuario(novoEmail.trim(), novaSenha, novoNivel, novoRole);
+      await adminCriarUsuario(novoEmail.trim(), novaSenha, novoRole);
       onAviso("Usuário criado.", "ok");
       setNovoEmail("");
       setNovaSenha("");
@@ -71,7 +63,7 @@ export default function UsersTab({ onAviso }: UsersTabProps) {
     }
   }
 
-  async function salvarEdicao(patch: { email: string; nivel: Nivel; role: Role }) {
+  async function salvarEdicao(patch: { email: string; role: Role }) {
     if (!editando) return;
     try {
       await adminEditarUsuario(editando.id, patch);
@@ -108,7 +100,7 @@ export default function UsersTab({ onAviso }: UsersTabProps) {
   return (
     <>
       <h1 style={{ marginTop: 0 }}>Gestão de usuários</h1>
-      <p className="sub">Criar contas, editar email/nível/papel e redefinir senhas.</p>
+      <p className="sub">Criar contas, editar email/papel e redefinir senhas.</p>
 
       <div className="card">
         <h2>Novo usuário</h2>
@@ -120,15 +112,6 @@ export default function UsersTab({ onAviso }: UsersTabProps) {
           <div className="campo">
             <label htmlFor="n-senha">Senha</label>
             <input id="n-senha" type="password" placeholder="mín. 8 caracteres" value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)} />
-          </div>
-          <div className="campo">
-            <label htmlFor="n-nivel">Nível</label>
-            <select id="n-nivel" value={novoNivel} onChange={(e) => setNovoNivel(e.target.value as Nivel)}>
-              <option value="estagiario">Estagiário</option>
-              <option value="junior">Júnior</option>
-              <option value="pleno">Pleno</option>
-              <option value="senior">Sênior</option>
-            </select>
           </div>
           <div className="campo">
             <label htmlFor="n-role">Papel</label>
@@ -144,14 +127,13 @@ export default function UsersTab({ onAviso }: UsersTabProps) {
       <table>
         <thead>
           <tr>
-            <th>Email</th><th>Nível</th><th>Papel</th><th>Criado em</th><th>Ações</th>
+            <th>Email</th><th>Papel</th><th>Criado em</th><th>Ações</th>
           </tr>
         </thead>
         <tbody>
           {usuarios.map((u) => (
             <tr key={u.id}>
               <td>{u.email}</td>
-              <td>{NIVEL_LABEL[u.nivel] || u.nivel}</td>
               <td><span className={"badge" + (u.role === "admin" ? "" : " eng")}>{u.role === "admin" ? "Admin" : "Engenheiro"}</span></td>
               <td>{(u.criado_em || "").slice(0, 10)}</td>
               <td>

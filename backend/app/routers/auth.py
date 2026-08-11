@@ -36,7 +36,6 @@ def login(req: LoginRequest, request: Request):
     promover_se_admin(usuario)
     return {
         "email": usuario["email"],
-        "nivel": usuario["nivel"],
         "must_change_senha": usuario["must_change_senha"],
     }
 
@@ -62,7 +61,6 @@ def me(usuario: dict = Depends(usuario_atual)):
     return {
         "id": usuario["id"],
         "email": usuario["email"],
-        "nivel": usuario["nivel"],
         "memoria": usuario["memoria"],
         "role": usuario["role"],
         "must_change_senha": usuario["must_change_senha"],
